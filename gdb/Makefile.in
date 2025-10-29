@@ -1790,6 +1790,7 @@ ALLDEPFILES = \
 	arch/riscv.c \
 	arch/tic6x.c \
 	aarch32-tdep.c \
+	aarch64-darwin-nat.c \
 	aarch64-fbsd-nat.c \
 	aarch64-fbsd-tdep.c \
 	aarch64-linux-nat.c \

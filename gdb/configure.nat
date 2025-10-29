@@ -154,6 +154,10 @@ case ${gdb_host} in
 		NATDEPFILES="${NATDEPFILES} i386-darwin-nat.o x86-nat.o \
 		    nat/x86-dregs.o amd64-nat.o"
 		;;
+	    aarch64)
+		# Host: AArch64 running Darwin
+		NATDEPFILES="${NATDEPFILES} aarch64-darwin-nat.o aarch64-nat.o nat/aarch64-hw-point.o"
+		;;
 	esac
 	;;
     fbsd)
