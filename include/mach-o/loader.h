@@ -79,9 +79,9 @@ typedef enum bfd_mach_o_cpu_subtype
 
   /* arm64.  */
   BFD_MACH_O_CPU_SUBTYPE_ARM64_ALL = 0,
-  BFD_MACH_O_CPU_SUBTYPE_ARM64_V8 = 1
-}
-bfd_mach_o_cpu_subtype;
+  BFD_MACH_O_CPU_SUBTYPE_ARM64_V8 = 1,
+  BFD_MACH_O_CPU_SUBTYPE_ARM64E = 2,
+} bfd_mach_o_cpu_subtype;
 
 typedef enum bfd_mach_o_filetype
 {
