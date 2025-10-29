@@ -721,6 +721,7 @@ ALL_AMD_DBGAPI_TARGET_OBS = \
 # (used with --enable-targets=all --enable-64-bit-bfd).
 ALL_64_TARGET_OBS = \
 	aarch64-fbsd-tdep.o \
+	aarch64-darwin-tdep.o \
 	aarch64-linux-tdep.o \
 	aarch64-newlib-tdep.o \
 	aarch64-ravenscar-thread.o \
@@ -1791,6 +1792,7 @@ ALLDEPFILES = \
 	arch/tic6x.c \
 	aarch32-tdep.c \
 	aarch64-darwin-nat.c \
+	aarch64-darwin-tdep.c \
 	aarch64-fbsd-nat.c \
 	aarch64-fbsd-tdep.c \
 	aarch64-linux-nat.c \
