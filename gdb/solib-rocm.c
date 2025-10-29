@@ -202,7 +202,8 @@ struct rocm_solib_ops : public solib_ops
   /* The methods implemented by rocm_solib_ops.  */
   owning_intrusive_list<solib> current_sos () override;
   void create_inferior_hook (int from_tty) override;
-  gdb_bfd_ref_ptr bfd_open (const char *pathname) override;
+  gdb_bfd_ref_ptr bfd_open (const char *pathname,
+			    const lm_info_up &lm_info) override;
   void relocate_section_addresses (solib &so, target_section *) const override;
   void handle_event () override;
 
@@ -602,7 +603,7 @@ rocm_solib_ops::bfd_iovec_open (bfd *abfd)
 }
 
 gdb_bfd_ref_ptr
-rocm_solib_ops::bfd_open (const char *pathname)
+rocm_solib_ops::bfd_open (const char *pathname, const lm_info_up &)
 {
   gdb_assert (strstr (pathname, "://") != nullptr);
 

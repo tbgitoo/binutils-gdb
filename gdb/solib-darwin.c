@@ -45,7 +45,8 @@ struct darwin_solib_ops : public solib_ops
   void clear_solib (program_space *pspace) const override;
   void create_inferior_hook (int from_tty) override;
   owning_intrusive_list<solib> current_sos () override;
-  gdb_bfd_ref_ptr bfd_open (const char *pathname) override;
+  gdb_bfd_ref_ptr bfd_open (const char *pathname,
+			    const lm_info_up &lm_info) override;
 };
 
 /* See solib-darwin.h.  */
@@ -90,6 +91,8 @@ struct darwin_info
   /* Address of structure dyld_all_image_infos in inferior.  */
   CORE_ADDR all_image_addr = 0;
 
+  mach_o_dyld_cache_shared_struct *dc_shared = NULL;
+
   /* Gdb copy of dyld_all_info_infos.  */
   struct gdb_dyld_all_image_infos all_image {};
 };
@@ -104,7 +107,14 @@ static const registry<program_space>::key<darwin_info>
 static darwin_info *
 get_darwin_info (program_space *pspace)
 {
-  return &solib_darwin_pspace_data.try_emplace (pspace);
+  darwin_info *info = solib_darwin_pspace_data.get (pspace);
+  if (info != nullptr)
+    return info;
+
+  info = &solib_darwin_pspace_data.try_emplace (pspace);
+  info->dc_shared = (mach_o_dyld_cache_shared_struct *) calloc
+    (1, sizeof (mach_o_dyld_cache_shared_struct));
+  return info;
 }
 
 /* Return non-zero if the version in dyld_all_image is known.  */
@@ -159,6 +169,8 @@ struct lm_info_darwin final : public lm_info
   explicit lm_info_darwin (CORE_ADDR lm_addr)
     : lm_addr (lm_addr)
   {}
+
+  bool in_dyld_cache = false;
 
   /* The target location of lm.  */
   CORE_ADDR lm_addr;
@@ -635,10 +647,24 @@ darwin_solib_ops::relocate_section_addresses (solib &so,
 }
 
 gdb_bfd_ref_ptr
-darwin_solib_ops::bfd_open (const char *pathname)
+darwin_solib_ops::bfd_open (const char *pathname, const lm_info_up &lm_info)
 {
   int found_file;
-
+  auto *li = gdb::checked_static_cast<lm_info_darwin *> (lm_info.get ());
+  if (li->in_dyld_cache)
+    {
+      /* TODO: we need the size to extend to __LINKEDIT and not really
+       * anything after that. Finding the size of __LINKEDIT, however, is
+       * difficult without constructing this bfd object, which requires that
+       * LINKEDIT is within its boundaries. So, for now we resort to this hack
+       * where we give the memory view an unfathomable size. */
+      gdb_bfd_ref_ptr res = solib_bfd_open_at (li->lm_addr, 0xf00db000);
+      mach_o_data_struct *mdata = bfd_mach_o_get_data (res);
+      mdata->dyld_cache_shared
+          = get_darwin_info (current_program_space)->dc_shared;
+      bfd_set_filename (res.get (), pathname);
+      return res;
+    }
   /* Search for shared library file.  */
   gdb::unique_xmalloc_ptr<char> found_pathname
     = solib_find (pathname, &found_file);

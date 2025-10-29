@@ -34,7 +34,8 @@ struct aix_solib_ops : public solib_ops
   void relocate_section_addresses (solib &so, target_section *) const override;
   void create_inferior_hook (int from_tty) override;
   owning_intrusive_list<solib> current_sos () override;
-  gdb_bfd_ref_ptr bfd_open (const char *pathname) override;
+  gdb_bfd_ref_ptr bfd_open (const char *pathname,
+			    const lm_info_up &lm_info) override;
 };
 
 /* See solib-aix.h.  */
@@ -498,7 +499,7 @@ aix_solib_ops::current_sos ()
 }
 
 gdb_bfd_ref_ptr
-aix_solib_ops::bfd_open (const char *pathname)
+aix_solib_ops::bfd_open (const char *pathname, const lm_info_up &lm_info)
 {
   /* The pathname is actually a synthetic filename with the following
      form: "/path/to/sharedlib(member.o)" (double-quotes excluded).
@@ -512,7 +513,7 @@ aix_solib_ops::bfd_open (const char *pathname)
   int found_file;
 
   if (pathname[path_len - 1] != ')')
-    return solib_ops::bfd_open (pathname);
+    return solib_ops::bfd_open (pathname, lm_info);
 
   /* Search for the associated parens.  */
   sep = strrchr (pathname, '(');
@@ -522,7 +523,7 @@ aix_solib_ops::bfd_open (const char *pathname)
 	 to open pathname without decoding, possibly leading to
 	 a failure), rather than triggering an assert failure).  */
       warning (_("missing '(' in shared object pathname: %s"), pathname);
-      return solib_ops::bfd_open (pathname);
+      return solib_ops::bfd_open (pathname, lm_info);
     }
   filename_len = sep - pathname;
 

@@ -78,6 +78,10 @@ struct solib : intrusive_list_node<solib>
      responsible for taking care of that.  */
   void clear () ;
 
+  /* Open this shared library.  The link map is passed through so targets
+     such as Darwin can read a dyld-shared-cache mapping instead of a file.  */
+  gdb_bfd_ref_ptr bfd_open (const char *pathname);
+
   /* The following fields of the structure come directly from the
      dynamic linker's tables in the inferior, and are initialized by
      current_sos.  */
@@ -192,8 +196,10 @@ struct solib_ops
   virtual bool in_dynsym_resolve_code (CORE_ADDR pc) const
   { return false; };
 
-  /* Find and open shared library binary file.  */
-  virtual gdb_bfd_ref_ptr bfd_open (const char *pathname);
+  /* Find and open shared library binary file.  LM_INFO is the target
+     link map for this solib, when one is available.  */
+  virtual gdb_bfd_ref_ptr bfd_open (const char *pathname,
+				    const lm_info_up &lm_info);
 
   /* Given two solib objects, GDB from the GDB thread list and INFERIOR from the
      list returned by current_sos, return true if they represent the same library.
@@ -299,6 +305,12 @@ protected:
 /* A unique pointer to an solib_ops.  */
 using solib_ops_up = std::unique_ptr<solib_ops>;
 
+inline gdb_bfd_ref_ptr
+solib::bfd_open (const char *pathname)
+{
+  return ops ().bfd_open (pathname, lm_info);
+}
+
 /* Find main executable binary file.  */
 extern gdb::unique_xmalloc_ptr<char> exec_file_find (const char *in_pathname);
 
@@ -311,6 +323,8 @@ extern gdb_bfd_ref_ptr solib_bfd_fopen (const char *pathname, int fd);
 
 /* Find solib binary file and open it.  */
 extern gdb_bfd_ref_ptr solib_bfd_open (const char *in_pathname);
+
+extern gdb_bfd_ref_ptr solib_bfd_open_at (CORE_ADDR addr, ULONGEST size);
 
 /* Called when we free all symtabs of PSPACE, to free the shared library
    information as well.  */
