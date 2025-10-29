@@ -19,6 +19,7 @@
 
 
 #include "bfd.h"
+#include "breakpoint.h"
 #include "extract-store-integer.h"
 #include "objfiles.h"
 #include "gdbcore.h"
@@ -81,7 +82,7 @@ struct gdb_dyld_all_image_infos
 
 /* Current all_image_infos version.  */
 #define DYLD_VERSION_MIN 1
-#define DYLD_VERSION_MAX 15
+#define DYLD_VERSION_MAX 17
 
 /* Per PSPACE specific data.  */
 struct darwin_info
@@ -210,6 +211,32 @@ find_program_interpreter (void)
   return buf;
 }
 
+/* Extract dyld_all_image_addr reading it from
+   TARGET_OBJECT_DARWIN_DYLD_INFO.  */
+
+static void
+darwin_solib_read_all_image_info_addr (struct darwin_info *info)
+{
+  gdb_byte buf[8];
+  LONGEST len;
+  type *ptr_type
+      = builtin_type (current_inferior ()->arch ())->builtin_data_ptr;
+
+  /* Sanity check.  */
+  if (ptr_type->length () > sizeof (buf))
+    return;
+
+  len = target_read (current_inferior ()->top_target (),
+                     TARGET_OBJECT_DARWIN_DYLD_INFO, NULL, buf, 0,
+                     ptr_type->length ());
+  if (len <= 0)
+    return;
+
+  /* The use of BIG endian is intended, as BUF is a raw stream of bytes.  This
+      makes the support of remote protocol easier.  */
+  info->all_image_addr = extract_unsigned_integer (buf, len, BFD_ENDIAN_BIG);
+}
+
 owning_intrusive_list<solib>
 darwin_solib_ops::current_sos ()
 {
@@ -225,6 +252,19 @@ darwin_solib_ops::current_sos ()
 
   if (!darwin_dyld_version_ok (info))
     return {};
+
+  /* Check to see if dyld has rebased itself. This usually happens during
+   * initialization on newer versions (~17). */
+  CORE_ADDR old_addr = info->all_image_addr;
+  darwin_solib_read_all_image_info_addr (info);
+
+  if (info->all_image_addr != old_addr)
+    {
+      // We have rebased, relocate the breakpoint and all libraries.
+      clear_solib (m_pspace);
+      remove_solib_event_breakpoints_at_next_stop ();
+      create_inferior_hook (0);
+    }
 
   image_info_size = ptr_len * 3;
 
@@ -444,32 +484,6 @@ darwin_solib_get_all_image_info_addr_at_init (struct darwin_info *info)
   info->all_image_addr += load_addr;
 }
 
-/* Extract dyld_all_image_addr reading it from
-   TARGET_OBJECT_DARWIN_DYLD_INFO.  */
-
-static void
-darwin_solib_read_all_image_info_addr (struct darwin_info *info)
-{
-  gdb_byte buf[8];
-  LONGEST len;
-  type *ptr_type
-    = builtin_type (current_inferior ()->arch ())->builtin_data_ptr;
-
-  /* Sanity check.  */
-  if (ptr_type->length () > sizeof (buf))
-    return;
-
-  len = target_read (current_inferior ()->top_target (),
-		     TARGET_OBJECT_DARWIN_DYLD_INFO,
-		     NULL, buf, 0, ptr_type->length ());
-  if (len <= 0)
-    return;
-
-  /* The use of BIG endian is intended, as BUF is a raw stream of bytes.  This
-      makes the support of remote protocol easier.  */
-  info->all_image_addr = extract_unsigned_integer (buf, len, BFD_ENDIAN_BIG);
-}
-
 void
 darwin_solib_ops::create_inferior_hook (int from_tty)
 {
@@ -560,8 +574,23 @@ darwin_solib_ops::create_inferior_hook (int from_tty)
 		 adding the dyld relocated base address to the current
 		 notifier offset value.  */
 
-	      notifier += dyld_relocated_base_address;
-	    }
+        /* HACK: On arm64e (dyld version around or over 17) the original
+          * notifier value (which is only supposed to contain the addend
+          * for relocation purposes) has some metadata on the higher bits
+          * of the value, used for the
+          * DYLD_CHAINED_PTR_ARM64E_USERLAND{,24} fix-up chain kind.
+          *
+          * Strip the metadata. This shouldn't lose information as the
+          * start address should hopefully be less than 0x100000000. On
+          * the author's machine, the chained ptr type for this pointer
+          * was a dyld_chained_ptr_arm64e_auth_bind24, so the addend would
+          * indeed always fit in 32 > 24 bits. This can possibly change
+          * across dyld versions, though.
+          *
+          * A proper fix would have to (partially) run through the fixup
+          * chains of dyld before grabbing the data stored at notifier. */
+        notifier = dyld_relocated_base_address + (notifier & 0xffffffff);
+      }
 	}
     }
 
