@@ -430,6 +430,8 @@ bfd_hash_table_init_n (struct bfd_hash_table *table,
 {
   unsigned long alloc;
 
+  BFD_ASSERT (size != 0);
+
   alloc = size;
   alloc *= sizeof (struct bfd_hash_entry *);
   if (alloc / sizeof (struct bfd_hash_entry *) != size)

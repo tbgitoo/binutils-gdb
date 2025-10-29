@@ -422,6 +422,11 @@ macho_add_oso_symfile (oso_el *oso, const gdb_bfd_ref_ptr &abfd,
 
   macho_debug (0, _("Loading debugging symbols from oso: %s\n"), oso->name);
 
+  if (oso->nbr_syms == 0)
+    {
+      return;
+    }
+
   if (!gdb_bfd_check_format (abfd.get (), bfd_object))
     {
       warning (_("`%s': can't read symbols: %s."), oso->name,
