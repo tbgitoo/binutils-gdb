@@ -623,6 +623,20 @@ typedef struct bfd_mach_o_load_command
 }
 bfd_mach_o_load_command;
 
+/* shared as in pointed to by multiple bfd's */
+typedef struct mach_o_dyld_cache_shared_struct
+{
+  char *shared_strtab;
+  size_t shared_strtab_size;
+  /* the offset at which this strtab was found */
+  int64_t shared_strtab_key;
+} bfd_mach_o_dyld_cache_shared_struct;
+
+void bfd_destroy_mach_o_dyld_cache_shared_struct (
+    struct mach_o_dyld_cache_shared_struct *dcshared);
+void bfd_init_mach_o_dyld_cache_shared_struct (
+    struct mach_o_dyld_cache_shared_struct *dcshared);
+
 typedef struct mach_o_data_struct
 {
   /* Mach-O header.  */
@@ -654,6 +668,10 @@ typedef struct mach_o_data_struct
 
   /* BFD of .dSYM file.  */
   bfd *dsym_bfd;
+
+  /* Holds data shared between dylibs in a dyld cache. Not used if the dylib
+   * is not a part of the dyld cache. */
+  bfd_mach_o_dyld_cache_shared_struct *dyld_cache_shared;
 
   /* Cache of dynamic relocs.  */
   arelent *dyn_reloc_cache;
