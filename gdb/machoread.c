@@ -786,7 +786,7 @@ macho_symfile_read (struct objfile *objfile, symfile_add_flags symfile_flags)
   /* Get symbols from the symbol table only if the file is an executable.
      The symbol table of object files is not relocated and is expected to
      be in the executable.  */
-  if (bfd_get_file_flags (abfd) & (EXEC_P | DYNAMIC))
+  if (bfd_get_file_flags (abfd) & (EXEC_P | DYNAMIC | DYLINKER))
     {
       std::string dsym_filename;
 

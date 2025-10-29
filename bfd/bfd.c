@@ -227,6 +227,10 @@ CODE_FRAGMENT
 .  {* Don't generate ELF section header.  *}
 .#define BFD_NO_SECTION_HEADER	0x800000
 .
+.  {* BFD is a dynamic linker.  *}
+.#define DYLINKER              0x1000000
+.
+.
 .  {* Flags bits which are for BFD use only.  *}
 .#define BFD_FLAGS_FOR_BFD_USE_MASK \
 .  (BFD_IN_MEMORY | BFD_COMPRESS | BFD_DECOMPRESS | BFD_LINKER_CREATED \

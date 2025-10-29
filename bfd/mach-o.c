@@ -5268,6 +5268,9 @@ bfd_mach_o_scan (bfd *abfd,
     case BFD_MACH_O_MH_BUNDLE:
       abfd->flags |= DYNAMIC;
       break;
+    case BFD_MACH_O_MH_DYLINKER:
+      abfd->flags |= DYLINKER;
+      break;
     }
 
   bfd_mach_o_convert_architecture (header->cputype, header->cpusubtype,
