@@ -456,4 +456,21 @@ typedef enum bfd_mach_o_i386_thread_flavour
 }
 bfd_mach_o_i386_thread_flavour;
 
+/* Defined in <mach/arm/thread_status.h> */
+typedef enum bfd_mach_o_arm_thread_flavour
+{
+  BFD_MACH_O_ARM_THREAD_STATE         = 1,
+  #define BFD_MACH_O_ARM_UNIFIED_THREAD_STATE BFD_MACH_O_ARM_THREAD_STATE
+  BFD_MACH_O_ARM_VFP_STATE            = 2,
+  BFD_MACH_O_ARM_EXCEPTION_STATE      = 3,
+  BFD_MACH_O_ARM_DEBUG_STATE          = 4,
+  BFD_MACH_O_ARM_THREAD_STATE_NONE    = 5,
+  BFD_MACH_O_ARM_THREAD_STATE64       = 6,
+  BFD_MACH_O_ARM_EXCEPTION_STATE64    = 7,
+  /* This name makes things confusing, so let's comment it out. */
+  // BFD_MACH_O_ARM_THREAD_STATE_LAST       = 8,
+  BFD_MACH_O_ARM_THREAD_STATE32       = 9,
+}
+bfd_mach_o_arm_thread_flavour;
+
 #endif /* _MACH_O_LOADER_H */

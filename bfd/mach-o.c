@@ -18,6 +18,7 @@
    Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
    MA 02110-1301, USA.  */
 
+#include "mach-o/loader.h"
 #include "sysdep.h"
 #include <limits.h>
 #include "bfd.h"
@@ -5216,8 +5217,19 @@ bfd_mach_o_scan_start_address (bfd *abfd)
 	      || bfd_read (buf, 8, abfd) != 8)
 	    return false;
 
-	  abfd->start_address = bfd_h_get_64 (abfd, buf);
-	}
+    abfd->start_address = bfd_h_get_64 (abfd, buf);
+  }
+      else if ((mdata->header.cputype == BFD_MACH_O_CPU_TYPE_ARM64)
+         && (thr->flavours[i].flavour == BFD_MACH_O_ARM_THREAD_STATE64))
+  {
+    unsigned char buf[8];
+
+    if (bfd_seek (abfd, thr->flavours[i].offset + (32 * 8), SEEK_SET) != 0
+        || bfd_read (buf, 8, abfd) != 8)
+      return false;
+
+    abfd->start_address = bfd_h_get_64 (abfd, buf);
+  }
     }
 
   return true;
