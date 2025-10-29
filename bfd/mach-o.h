@@ -669,6 +669,11 @@ typedef struct mach_o_data_struct
   /* BFD of .dSYM file.  */
   bfd *dsym_bfd;
 
+  /* these are cached segments used for calculating mach-o-base relative
+   * offsets for bfd's in a dyld cache. */
+  bfd_mach_o_segment_command *seg_linkedit;
+  bfd_mach_o_segment_command *seg_text;
+
   /* Holds data shared between dylibs in a dyld cache. Not used if the dylib
    * is not a part of the dyld cache. */
   bfd_mach_o_dyld_cache_shared_struct *dyld_cache_shared;

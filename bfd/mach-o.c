@@ -4428,6 +4428,27 @@ bfd_mach_o_read_thread (bfd *abfd, bfd_mach_o_load_command *command)
   return true;
 }
 
+/* takes an offset in a dylib "D" in the dyld cache pointing into a buffer in
+ * __LINKEDIT and makes it relative to the start of the mach-o header of D */
+static int64_t
+fixup_offset_for_shared_cache (bfd *abfd, uint64_t offset)
+{
+  struct mach_o_data_struct *mdata = bfd_mach_o_get_data (abfd);
+  uint64_t val;
+  BFD_ASSERT (mdata->header.flags & BFD_MACH_O_MH_DYLIB_IN_CACHE);
+
+  if (!mdata->seg_linkedit || !mdata->seg_text)
+    {
+      return -1;
+    }
+
+  val = mdata->seg_linkedit->vmaddr - mdata->seg_text->vmaddr + offset
+        - mdata->seg_linkedit->fileoff;
+
+  BFD_ASSERT (val >= 0);
+  return val;
+}
+
 static bool
 bfd_mach_o_read_dysymtab (bfd *abfd, bfd_mach_o_load_command *command,
 			  ufile_ptr filesize)
@@ -4463,6 +4484,11 @@ bfd_mach_o_read_dysymtab (bfd *abfd, bfd_mach_o_load_command *command,
     cmd->nextrel = bfd_h_get_32 (abfd, raw.nextrel);
     cmd->locreloff = bfd_h_get_32 (abfd, raw.locreloff);
     cmd->nlocrel = bfd_h_get_32 (abfd, raw.nlocrel);
+
+    /* this needs to be handled here instead of after all LC's have been parsed
+     * because it is used later in this routine to read values from abfd. */
+    cmd->indirectsymoff
+        = fixup_offset_for_shared_cache (abfd, cmd->indirectsymoff);
   }
 
   if (cmd->nmodtab != 0)
@@ -5033,6 +5059,15 @@ bfd_mach_o_read_segment (bfd *abfd,
 	(seg, bfd_mach_o_get_mach_o_section (sec));
     }
 
+  if (!strcmp (seg->segname, "__LINKEDIT"))
+    {
+      bfd_mach_o_get_data (abfd)->seg_linkedit = seg;
+    }
+  if (!strcmp (seg->segname, "__TEXT"))
+    {
+      bfd_mach_o_get_data (abfd)->seg_text = seg;
+    }
+
   return true;
 }
 
@@ -5459,6 +5494,24 @@ bfd_mach_o_scan (bfd *abfd,
 	      return false;
 	    }
 	}
+    }
+
+  if (mdata->header.flags & BFD_MACH_O_MH_DYLIB_IN_CACHE)
+    {
+      for (bfd_mach_o_load_command *cmd = mdata->first_command; cmd != NULL;
+           cmd = cmd->next)
+        {
+          if (cmd->type == BFD_MACH_O_LC_SYMTAB)
+            {
+              cmd->command.symtab.stroff = fixup_offset_for_shared_cache (
+                  abfd, cmd->command.symtab.stroff);
+              cmd->command.symtab.symoff = fixup_offset_for_shared_cache (
+                  abfd, cmd->command.symtab.symoff);
+
+              BFD_ASSERT (cmd->command.symtab.stroff >= 0);
+              BFD_ASSERT (cmd->command.symtab.symoff >= 0);
+            }
+        }
     }
 
   /* Sections should be flatten before scanning start address.  */
