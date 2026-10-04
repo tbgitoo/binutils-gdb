@@ -1,0 +1,121 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# GDB/MI commands an IDE uses while debugging an interactive console
+# program on native AArch64 Darwin.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+require allow_cplus_tests
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile aarch64-cxx-interactive.cc
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+	 {debug c++ additional_flags=-O0}] != ""} {
+    untested "failed to compile"
+    return
+}
+
+if {[mi_clean_restart $testfile]} {
+    return
+}
+
+mi_gdb_test "-gdb-set startup-with-shell off" "\\^done" \
+    "disable startup-with-shell"
+
+set compare [gdb_get_line_number "if (value > 3)"]
+mi_create_breakpoint "$srcfile:$compare" "insert breakpoint at the comparison" \
+    -number 1 -func "main\\(\\)" -file ".*aarch64-cxx-interactive.cc" -line $compare
+
+# Feed stdin through the inferior tty, which is how a console IDE
+# delivers typed input.  The bytes are buffered until std::cin reads
+# them.  Symbol loading can take a while before that read happens.
+send_gdb "-exec-run\n"
+gdb_expect {
+    -re "\\^running\r\n" {
+    }
+    timeout {
+	fail "exec-run started"
+	return
+    }
+}
+send_inferior "9\n"
+gdb_expect {
+    -re "if \\(value > 3\\).*\\*stopped,reason=\"breakpoint-hit\".*\r\n$mi_gdb_prompt$" {
+	pass "exec-run stops at the comparison"
+    }
+    -re "\\*stopped,reason=\"exited" {
+	fail "exec-run stops at the comparison (inferior exited)"
+	return
+    }
+    timeout {
+	fail "exec-run stops at the comparison (timeout)"
+	return
+    }
+}
+
+mi_gdb_test "-stack-list-frames" \
+    "\\^done,stack=\\\[frame=\{level=\"0\",addr=\"0x\[0-9a-fA-F\]+\",func=\"main\",.*line=\"$compare\".*\\\]" \
+    "stack-list-frames"
+
+mi_gdb_test "-stack-list-locals --simple-values" \
+    "\\^done,locals=\\\[\{name=\"value\",type=\"int\",value=\"9\"\}.*\\\]" \
+    "stack-list-locals"
+
+mi_gdb_test "-data-evaluate-expression value" \
+    "\\^done,value=\"9\"" \
+    "data-evaluate-expression"
+
+mi_create_varobj_checked v value int "var-create value"
+mi_gdb_test "-var-evaluate-expression v" "\\^done,value=\"9\"" \
+    "var-evaluate-expression"
+mi_gdb_test "-var-update v" "\\^done,changelist=\\\[\\\]" "var-update"
+
+# -exec-next returns ^running and a prompt, then *stopped arrives later.
+mi_next_to "main" "" "aarch64-cxx-interactive.cc" "16" \
+    "exec-next enters the true branch"
+
+mi_gdb_test "-var-update v" "\\^done,changelist=\\\[\\\]" \
+    "var-update after next"
+mi_gdb_test "-stack-list-arguments --simple-values" \
+    "\\^done,stack-args=\\\[frame=\{level=\"0\",args=\\\[\\\]\}\\\]" \
+    "stack-list-arguments"
+
+mi_gdb_test "-thread-info" \
+    "\\^done,threads=\\\[.*state=\"stopped\".*\\].*" \
+    "thread-info"
+
+mi_gdb_test "-break-delete 1" "\\^done" "break-delete"
+mi_gdb_test "-var-delete v" "\\^done,ndeleted=\"1\"" "var-delete"
+
+mi_send_resuming_command "exec-continue" "exec-continue exits normally"
+gdb_expect {
+    -re "\\*stopped,reason=\"exited\",exit-code=\"01\"\r\n$mi_gdb_prompt$" {
+	pass "exec-continue exits normally"
+    }
+    -re "\\*stopped,reason=\"exited-normally\"\r\n$mi_gdb_prompt$" {
+	fail "exec-continue exits normally (exit status was zero)"
+    }
+    -re ".*\r\n$mi_gdb_prompt$" {
+	fail "exec-continue exits normally (unexpected output)"
+    }
+    timeout {
+	fail "exec-continue exits normally (timeout)"
+    }
+}
+
+mi_gdb_exit
