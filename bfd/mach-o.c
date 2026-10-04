@@ -4428,27 +4428,6 @@ bfd_mach_o_read_thread (bfd *abfd, bfd_mach_o_load_command *command)
   return true;
 }
 
-/* takes an offset in a dylib "D" in the dyld cache pointing into a buffer in
- * __LINKEDIT and makes it relative to the start of the mach-o header of D */
-static int64_t
-fixup_offset_for_shared_cache (bfd *abfd, uint64_t offset)
-{
-  struct mach_o_data_struct *mdata = bfd_mach_o_get_data (abfd);
-  uint64_t val;
-  BFD_ASSERT (mdata->header.flags & BFD_MACH_O_MH_DYLIB_IN_CACHE);
-
-  if (!mdata->seg_linkedit || !mdata->seg_text)
-    {
-      return -1;
-    }
-
-  val = mdata->seg_linkedit->vmaddr - mdata->seg_text->vmaddr + offset
-        - mdata->seg_linkedit->fileoff;
-
-  BFD_ASSERT (val >= 0);
-  return val;
-}
-
 static bool
 bfd_mach_o_read_dysymtab (bfd *abfd, bfd_mach_o_load_command *command,
 			  ufile_ptr filesize)
@@ -4485,10 +4464,12 @@ bfd_mach_o_read_dysymtab (bfd *abfd, bfd_mach_o_load_command *command,
     cmd->locreloff = bfd_h_get_32 (abfd, raw.locreloff);
     cmd->nlocrel = bfd_h_get_32 (abfd, raw.nlocrel);
 
-    /* this needs to be handled here instead of after all LC's have been parsed
-     * because it is used later in this routine to read values from abfd. */
-    cmd->indirectsymoff
-        = fixup_offset_for_shared_cache (abfd, cmd->indirectsymoff);
+    /* Offsets in a dyld-shared-cache image are relative to __LINKEDIT.
+       This has to happen here, before this routine reads through them.
+       Other Mach-O files already store file-relative offsets.  */
+    if (mdata->header.flags & BFD_MACH_O_MH_DYLIB_IN_CACHE)
+      cmd->indirectsymoff
+	= fixup_offset_for_shared_cache (abfd, cmd->indirectsymoff);
   }
 
   if (cmd->nmodtab != 0)

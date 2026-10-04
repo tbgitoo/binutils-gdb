@@ -1099,7 +1099,20 @@ darwin_nat_target::decode_message (mach_msg_header_t *hdr,
 	      pid_t res_pid;
 	      int wstatus;
 
-	      res_pid = wait4 (inf->pid, &wstatus, 0, NULL);
+	      /* WNOHANG: a dead-name notification also arrives when exec
+		 replaces the Mach task but the Unix process is still
+		 alive.  Blocking here waits for an exit that is not
+		 coming.  WUNTRACED still reports a job-control stop,
+		 which is handled below.  */
+	      res_pid = wait4 (inf->pid, &wstatus, WNOHANG | WUNTRACED, NULL);
+	      if (res_pid == 0)
+		{
+		  status->set_ignore ();
+		  inferior_debug
+		    (4, _("darwin_wait: pid=%d task port died, process alive\n"),
+		     inf->pid);
+		  return minus_one_ptid;
+		}
 	      if (res_pid < 0 || res_pid != inf->pid)
 		{
 		  warning (_("wait4: res=%d: %s\n"),
