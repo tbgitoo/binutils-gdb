@@ -5167,6 +5167,11 @@ bfd_mach_o_read_command (bfd *abfd, bfd_mach_o_load_command *command,
     case BFD_MACH_O_LC_LINKER_OPTIMIZATION_HINT:
     case BFD_MACH_O_LC_DYLD_EXPORTS_TRIE:
     case BFD_MACH_O_LC_DYLD_CHAINED_FIXUPS:
+    case BFD_MACH_O_LC_FUNCTION_VARIANTS:
+    case BFD_MACH_O_LC_FUNCTION_VARIANT_FIXUPS:
+      /* Record the linkedit range.  The variant tables are not
+	 interpreted; rejecting them made current dyld cache images
+	 fail bfd_check_format.  */
       if (!bfd_mach_o_read_linkedit (abfd, command))
 	return false;
       break;

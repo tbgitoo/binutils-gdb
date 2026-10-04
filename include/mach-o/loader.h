@@ -192,6 +192,11 @@ typedef enum bfd_mach_o_load_command_type
   BFD_MACH_O_LC_BUILD_VERSION = 0x32,		/* Generic build version.  */
   BFD_MACH_O_LC_DYLD_EXPORTS_TRIE = 0x33,	/* Exports trie. */
   BFD_MACH_O_LC_DYLD_CHAINED_FIXUPS = 0x34,	/* Chained fixups. */
+  /* Function variants select an alternate implementation.  The payload
+     lives in __LINKEDIT and is not needed to map the image or read its
+     symbol table.  */
+  BFD_MACH_O_LC_FUNCTION_VARIANTS = 0x37,
+  BFD_MACH_O_LC_FUNCTION_VARIANT_FIXUPS = 0x38,
 }
 bfd_mach_o_load_command_type;
 

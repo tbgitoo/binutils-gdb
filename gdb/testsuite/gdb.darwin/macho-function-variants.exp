@@ -1,0 +1,105 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# LC_FUNCTION_VARIANTS (0x37) and LC_FUNCTION_VARIANT_FIXUPS (0x38) are
+# linkedit blobs.  Recognizing them must not hide a genuinely unknown
+# load command.
+
+require {istarget "aarch64*-*-darwin*"}
+
+proc macho_le32 {value} {
+    return [binary format i $value]
+}
+
+proc macho_le64 {value} {
+    return [binary format w $value]
+}
+
+proc macho_segment_64 {} {
+    set seg [macho_le32 0x19]
+    append seg [macho_le32 72]
+    append seg "__TEXT"
+    append seg [string repeat "\0" 10]
+    append seg [macho_le64 0]
+    append seg [macho_le64 0]
+    append seg [macho_le64 0]
+    append seg [macho_le64 0]
+    append seg [macho_le32 5]
+    append seg [macho_le32 5]
+    append seg [macho_le32 0]
+    append seg [macho_le32 0]
+    if {[string length $seg] != 72} {
+	error "LC_SEGMENT_64 length is [string length $seg]"
+    }
+    return $seg
+}
+
+proc macho_linkedit {cmd} {
+    set raw [macho_le32 $cmd]
+    append raw [macho_le32 16]
+    append raw [macho_le32 0]
+    append raw [macho_le32 0]
+    return $raw
+}
+
+proc write_macho {path extra} {
+    set cmds [macho_segment_64]
+    append cmds $extra
+    set ncmds [expr {1 + ([string length $extra] / 16)}]
+    set header [macho_le32 0xfeedfacf]
+    append header [macho_le32 0x0100000c]
+    append header [macho_le32 0]
+    append header [macho_le32 0x2]
+    append header [macho_le32 $ncmds]
+    append header [macho_le32 [string length $cmds]]
+    append header [macho_le32 0]
+    append header [macho_le32 0]
+
+    set fd [open $path wb]
+    fconfigure $fd -translation binary
+    puts -nonewline $fd $header
+    puts -nonewline $fd $cmds
+    close $fd
+}
+
+set variants [standard_output_file function-variants.macho]
+set unknown [standard_output_file unknown-load-command.macho]
+write_macho $variants [macho_linkedit 0x37][macho_linkedit 0x38]
+write_macho $unknown [macho_linkedit 0x3f]
+
+clean_restart
+
+set rejected 0
+gdb_test_multiple "file $variants" "recognize function-variant load commands" {
+    -re "unknown load command\[^\r\n\]*" {
+	set rejected 1
+	exp_continue
+    }
+    -re "not in executable format\[^\r\n\]*" {
+	set rejected 1
+	exp_continue
+    }
+    -re "Reading symbols from .*No debugging symbols found in .*\r\n$gdb_prompt $" {
+	if {$rejected} {
+	    fail "$gdb_test_name"
+	} else {
+	    pass "$gdb_test_name"
+	}
+    }
+}
+
+gdb_test "file $unknown" \
+    "unknown load command 0x3f\r\n\[^\r\n\]*not in executable format: file format not recognized" \
+    "an unknown load command is still reported"

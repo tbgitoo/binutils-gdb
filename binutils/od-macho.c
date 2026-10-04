@@ -217,6 +217,8 @@ static const bfd_mach_o_xlat_name bfd_mach_o_load_command_name[] =
   { "build_version", BFD_MACH_O_LC_BUILD_VERSION},
   { "exports_trie", BFD_MACH_O_LC_DYLD_EXPORTS_TRIE},
   { "chained_fixups", BFD_MACH_O_LC_DYLD_CHAINED_FIXUPS},
+  { "function_variants", BFD_MACH_O_LC_FUNCTION_VARIANTS},
+  { "function_variant_fixups", BFD_MACH_O_LC_FUNCTION_VARIANT_FIXUPS},
   { NULL, 0}
 };
 
@@ -1606,6 +1608,8 @@ dump_load_command (bfd *abfd, bfd_mach_o_load_command *cmd,
     case BFD_MACH_O_LC_DYLIB_CODE_SIGN_DRS:
     case BFD_MACH_O_LC_DYLD_EXPORTS_TRIE:
     case BFD_MACH_O_LC_DYLD_CHAINED_FIXUPS:
+    case BFD_MACH_O_LC_FUNCTION_VARIANTS:
+    case BFD_MACH_O_LC_FUNCTION_VARIANT_FIXUPS:
       {
         bfd_mach_o_linkedit_command *linkedit = &cmd->command.linkedit;
         printf
