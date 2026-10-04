@@ -3895,13 +3895,23 @@ void
 bfd_destroy_mach_o_dyld_cache_shared_struct (
     struct mach_o_dyld_cache_shared_struct *dcshared)
 {
-  free (dcshared->shared_strtab);
+  struct bfd_mach_o_dyld_cache_strtab *entry = dcshared->strtabs;
+
+  while (entry != NULL)
+    {
+      struct bfd_mach_o_dyld_cache_strtab *next = entry->next;
+
+      free (entry->strtab);
+      free (entry);
+      entry = next;
+    }
+  dcshared->strtabs = NULL;
 }
 void
 bfd_init_mach_o_dyld_cache_shared_struct (
     struct mach_o_dyld_cache_shared_struct *dcshared)
 {
-  dcshared->shared_strtab = NULL;
+  dcshared->strtabs = NULL;
 }
 
 /* takes an offset in a dylib "D" in the dyld cache pointing into a buffer in
@@ -3944,12 +3954,78 @@ unfixup_offset_for_shared_cache (bfd *abfd, uint64_t offset)
   return val;
 }
 
+/* Return the string table for this shared-cache image.  Images that
+   share an unslid LC_SYMTAB string offset reuse one buffer.  A
+   different offset is a different table, not a malformed image.  A
+   size that disagrees with a table already cached at that offset is
+   reported and rejected.  */
+
+static char *
+bfd_mach_o_get_shared_cache_strtab (bfd *abfd, bfd_mach_o_symtab_command *sym,
+				   int64_t key)
+{
+  bfd_mach_o_data_struct *mdata = bfd_mach_o_get_data (abfd);
+  bfd_mach_o_dyld_cache_shared_struct *shared = mdata->dyld_cache_shared;
+  struct bfd_mach_o_dyld_cache_strtab *entry;
+  char *buf;
+
+  if (shared == NULL || key < 0)
+    return NULL;
+
+  for (entry = shared->strtabs; entry != NULL; entry = entry->next)
+    {
+      if (entry->key != key)
+	continue;
+      if (entry->strsize != sym->strsize)
+	{
+	  _bfd_error_handler
+	    (_("%pB: shared-cache string table at %#lx has size %#lx, "
+	       "not %#lx"),
+	     abfd, (unsigned long) key, (unsigned long) entry->strsize,
+	     (unsigned long) sym->strsize);
+	  return NULL;
+	}
+      return entry->strtab;
+    }
+
+  /* See PR 21840 for a reproducer.  */
+  if ((sym->strsize + 1) == 0)
+    return NULL;
+
+  buf = (char *) bfd_malloc (sym->strsize + 1);
+  if (buf == NULL)
+    {
+      bfd_set_error (bfd_error_no_memory);
+      return NULL;
+    }
+  if (bfd_seek (abfd, sym->stroff, SEEK_SET) != 0
+      || bfd_read (buf, sym->strsize, abfd) != sym->strsize)
+    {
+      free (buf);
+      return NULL;
+    }
+  buf[sym->strsize] = 0;
+
+  entry = (struct bfd_mach_o_dyld_cache_strtab *) bfd_malloc (sizeof (*entry));
+  if (entry == NULL)
+    {
+      free (buf);
+      bfd_set_error (bfd_error_no_memory);
+      return NULL;
+    }
+  entry->strtab = buf;
+  entry->strsize = sym->strsize;
+  entry->key = key;
+  entry->next = shared->strtabs;
+  shared->strtabs = entry;
+  return buf;
+}
+
 bool
 bfd_mach_o_read_symtab_strtab (bfd *abfd)
 {
   bfd_mach_o_data_struct *mdata = bfd_mach_o_get_data (abfd);
   bfd_mach_o_symtab_command *sym = mdata->symtab;
-  char *dylib_cache_shared_strtab;
 
   /* Fail if there is no symtab.  */
   if (sym == NULL)
@@ -3984,57 +4060,11 @@ bfd_mach_o_read_symtab_strtab (bfd *abfd)
         {
           int64_t absolute_stroff_offset
               = unfixup_offset_for_shared_cache (abfd, sym->stroff);
-          BFD_ASSERT (absolute_stroff_offset >= 0);
 
-          if (!mdata->dyld_cache_shared)
+          sym->strtab = bfd_mach_o_get_shared_cache_strtab
+	    (abfd, sym, absolute_stroff_offset);
+          if (sym->strtab == NULL)
             return false;
-
-          dylib_cache_shared_strtab = mdata->dyld_cache_shared->shared_strtab;
-
-          /* allocate a strtab shared across dyld cache entries */
-          if (dylib_cache_shared_strtab == NULL)
-            {
-              dylib_cache_shared_strtab
-                  = (char *)bfd_malloc (sym->strsize + 1);
-              if (dylib_cache_shared_strtab == NULL)
-                {
-                  bfd_set_error (bfd_error_no_memory);
-                  return false;
-                }
-              if (bfd_read (dylib_cache_shared_strtab, sym->strsize, abfd)
-                  != sym->strsize)
-                return false;
-              /* Zero terminate the string table.  */
-              dylib_cache_shared_strtab[sym->strsize] = 0;
-              mdata->dyld_cache_shared->shared_strtab
-                  = dylib_cache_shared_strtab;
-              mdata->dyld_cache_shared->shared_strtab_size = sym->strsize;
-              mdata->dyld_cache_shared->shared_strtab_key
-                  = absolute_stroff_offset;
-            }
-          else
-            {
-              if (sym->strsize != mdata->dyld_cache_shared->shared_strtab_size)
-                {
-                  _bfd_error_handler (
-                      _ ("dylib in shared cache did not point to a strtab "
-                         "with the correct size: %lx (ours) != %x (dylib)"),
-                      mdata->dyld_cache_shared->shared_strtab_size,
-                      sym->strsize);
-                  return false;
-                }
-              if (absolute_stroff_offset
-                  != mdata->dyld_cache_shared->shared_strtab_key)
-                {
-                  _bfd_error_handler (
-                      _ ("dylib in shared cache did not point to the strtab "
-                         "we cached: %lx (ours) != %lx (dylib)"),
-                      (size_t)mdata->dyld_cache_shared->shared_strtab_key,
-                      (size_t)absolute_stroff_offset);
-                  return false;
-                }
-            }
-          sym->strtab = dylib_cache_shared_strtab;
         }
       else
         {

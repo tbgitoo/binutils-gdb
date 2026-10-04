@@ -623,13 +623,21 @@ typedef struct bfd_mach_o_load_command
 }
 bfd_mach_o_load_command;
 
+/* One string table from the dyld shared cache.  Images in the same
+   cache can reference different tables, keyed by the unslid file
+   offset recorded in LC_SYMTAB.  */
+struct bfd_mach_o_dyld_cache_strtab
+{
+  char *strtab;
+  size_t strsize;
+  int64_t key;
+  struct bfd_mach_o_dyld_cache_strtab *next;
+};
+
 /* shared as in pointed to by multiple bfd's */
 typedef struct mach_o_dyld_cache_shared_struct
 {
-  char *shared_strtab;
-  size_t shared_strtab_size;
-  /* the offset at which this strtab was found */
-  int64_t shared_strtab_key;
+  struct bfd_mach_o_dyld_cache_strtab *strtabs;
 } bfd_mach_o_dyld_cache_shared_struct;
 
 void bfd_destroy_mach_o_dyld_cache_shared_struct (

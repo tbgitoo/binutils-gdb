@@ -1,0 +1,69 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# System dylibs in the dyld shared cache must be mapped, and symbols
+# from both shared string tables must be readable.  Failures of the
+# main executable are not expected here.
+
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug additional_flags=-O0}]} {
+    return -1
+}
+
+gdb_test_no_output "set startup-with-shell off"
+set timeout 180
+
+set bad_shared_cache 0
+gdb_test_multiple "start" "start without shared-cache parse errors" {
+    -re "unknown load command\[^\r\n\]*" {
+	set bad_shared_cache 1
+	exp_continue
+    }
+    -re "not in executable format\[^\r\n\]*" {
+	set bad_shared_cache 1
+	exp_continue
+    }
+    -re "did not point to a strtab\[^\r\n\]*" {
+	set bad_shared_cache 1
+	exp_continue
+    }
+    -re "unable to load symbols\[^\r\n\]*" {
+	set bad_shared_cache 1
+	exp_continue
+    }
+    -re "Can't read symbols from\[^\r\n\]*" {
+	set bad_shared_cache 1
+	exp_continue
+    }
+    -re "Temporary breakpoint .*main \\(\\).*\r\n$gdb_prompt $" {
+	if {$bad_shared_cache} {
+	    fail "$gdb_test_name"
+	} else {
+	    pass "$gdb_test_name"
+	}
+    }
+}
+
+# libdispatch carries LC_FUNCTION_VARIANTS and uses the primary cache
+# string table.  libsystem_trial uses the second cache string table.
+# Neither image has DWARF, so these are minimal symbols.
+gdb_test "info address dispatch_async" \
+    "Symbol \"dispatch_async\" is at 0x\[0-9a-fA-F\]+ in a file compiled without debugging\\."
+gdb_test "info address libsystem_trialVersionNumber" \
+    "Symbol \"libsystem_trialVersionNumber\" is at 0x\[0-9a-fA-F\]+ in a file compiled without debugging\\."
