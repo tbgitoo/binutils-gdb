@@ -33,11 +33,11 @@ if {![runto_main]} {
 }
 
 gdb_test "maintenance print target-stack" \
-    "native \\(Native process\\).*\n.*exec \\(Local exec file\\)" \
+    "native \\(Native process\\)\r\n  - exec \\(Local exec file\\)\r\n  - None \\(None\\)" \
     "target stack has the native Darwin process target"
 
 gdb_test "next" "answer = answer \\+ 1;"
-gdb_test "print answer" " = 41"
+gdb_test "print answer" " = 41" "print answer before the increment"
 gdb_test "step" "return answer;"
-gdb_test "print answer" " = 42"
-gdb_test "continue" "exited with code 052"
+gdb_test "print answer" " = 42" "print answer after the increment"
+gdb_test "continue" "exited with code 052\\\]"
