@@ -1,0 +1,59 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: memory writes, one general register, and PC.
+# Floating-point and SIMD registers are not written.
+
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug additional_flags=-O0}]} {
+    return -1
+}
+
+gdb_test_no_output "set startup-with-shell off"
+set timeout 180
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test "next" "answer = 9;"
+gdb_test "print answer" " = 7"
+gdb_test_no_output "set variable answer = 5" "set variable writes memory"
+gdb_test "print answer" " = 5" "local keeps the value written through memory"
+
+set x0_before ""
+gdb_test_multiple "print/x \$x0" "read x0 before the store" {
+    -re " = (0x\[0-9a-fA-F\]+)\r\n$gdb_prompt $" {
+	set x0_before $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_no_output "set \$x1 = 0x1122334455667788" "write x1"
+gdb_test "maintenance flush register-cache" "Register cache flushed\\."
+gdb_test "print/x \$x1" " = 0x1122334455667788" \
+    "x1 was stored in the thread"
+gdb_test "print/x \$x0" " = $x0_before" "writing x1 leaves x0 unchanged"
+
+gdb_test "set \$pc = finish_here" \
+    "Changing the program counter is not supported on AArch64 Darwin\\." \
+    "program counter stores are rejected"
+# answer = 9 still runs, so the function returns 9.
+gdb_test "continue" "exited with code 011\\\]" \
+    "inferior still exits after a rejected program-counter store"

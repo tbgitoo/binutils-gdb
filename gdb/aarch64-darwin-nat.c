@@ -54,24 +54,19 @@ static struct aarch64_darwin_nat_target darwin_target;
 static void
 fetch_gregs_from_thread (struct regcache *regcache)
 {
-  int ret;
   thread_t thread;
   size_t regno;
   arm_thread_state64_t regs;
   kern_return_t kret;
   mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
 
-  struct gdbarch *gdbarch = regcache->arch ();
-
   thread = regcache->ptid ().tid ();
 
   kret = thread_get_state (thread, ARM_THREAD_STATE64, (thread_state_t)&regs,
                            &count);
+  MACH_CHECK_ERROR (kret);
   if (kret != KERN_SUCCESS)
-    {
-      warning (_ ("darwin_set_sstep: error %x, thread=%x\n"), kret, thread);
-      return;
-    }
+    return;
 
   /* make sure that we're setting exactly the correct amount of data. */
   static_assert (sizeof (regs.__x) / sizeof (regs.__x[0])
@@ -96,12 +91,92 @@ aarch64_darwin_nat_target::fetch_registers (struct regcache *regcache,
     }
 }
 
-void
-aarch64_darwin_nat_target::store_registers (struct regcache *, int regno)
+/* Copy one valid register into the Mach thread state.  */
+
+static bool
+collect_valid_reg (struct regcache *regcache, int regno, void *dst)
 {
-  error (_ ("User on aarch64 darwin native wanted to write regs: %d\n\
-However, this is not implemented yet."),
-         regno);
+  if (regcache->get_register_status (regno) != REG_VALID)
+    return false;
+
+  regcache->raw_collect (regno, dst);
+  return true;
+}
+
+/* Write general-purpose registers.  The kernel state is read first and
+   only registers GDB holds as valid are replaced, so an untouched
+   register keeps the value currently in the thread.  Floating-point and
+   SIMD state is left unchanged.  */
+
+void
+aarch64_darwin_nat_target::store_registers (struct regcache *regcache,
+					    int regno)
+{
+  thread_t thread;
+  arm_thread_state64_t regs;
+  kern_return_t kret;
+  mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+  bool changed = false;
+  int first;
+  int last;
+  int r;
+
+  if (regno >= AARCH64_V0_REGNUM)
+    error (_("Writing floating-point or SIMD registers is not "
+	     "supported on AArch64 Darwin."));
+
+  /* thread_set_state of a new PC faults the inferior.  Leave the
+     kernel's program counter alone.  */
+  if (regno == AARCH64_PC_REGNUM)
+    error (_("Changing the program counter is not supported "
+	     "on AArch64 Darwin."));
+
+  gdb_assert (register_size (regcache->arch (), AARCH64_X0_REGNUM) == 8);
+  gdb_assert (register_size (regcache->arch (), AARCH64_CPSR_REGNUM) == 4);
+
+  thread = regcache->ptid ().tid ();
+  kret = thread_get_state (thread, ARM_THREAD_STATE64, (thread_state_t) &regs,
+			   &count);
+  MACH_CHECK_ERROR (kret);
+  if (kret != KERN_SUCCESS)
+    return;
+
+  if (regno == -1 || regno < AARCH64_FP_REGNUM)
+    {
+      first = regno == -1 ? AARCH64_X0_REGNUM : regno;
+      last = regno == -1 ? AARCH64_FP_REGNUM - 1 : regno;
+      for (r = first; r <= last; r++)
+	if (collect_valid_reg (regcache, r, &regs.__x[r - AARCH64_X0_REGNUM]))
+	  changed = true;
+    }
+
+  if (regno == -1 || regno == AARCH64_FP_REGNUM)
+    {
+      if (collect_valid_reg (regcache, AARCH64_FP_REGNUM, &regs.__fp))
+	changed = true;
+    }
+  if (regno == -1 || regno == AARCH64_LR_REGNUM)
+    {
+      if (collect_valid_reg (regcache, AARCH64_LR_REGNUM, &regs.__lr))
+	changed = true;
+    }
+  if (regno == -1 || regno == AARCH64_SP_REGNUM)
+    {
+      if (collect_valid_reg (regcache, AARCH64_SP_REGNUM, &regs.__sp))
+	changed = true;
+    }
+  if (regno == -1 || regno == AARCH64_CPSR_REGNUM)
+    {
+      if (collect_valid_reg (regcache, AARCH64_CPSR_REGNUM, &regs.__cpsr))
+	changed = true;
+    }
+
+  if (!changed)
+    return;
+
+  kret = thread_set_state (thread, ARM_THREAD_STATE64, (thread_state_t) &regs,
+			   count);
+  MACH_CHECK_ERROR (kret);
 }
 
 void
