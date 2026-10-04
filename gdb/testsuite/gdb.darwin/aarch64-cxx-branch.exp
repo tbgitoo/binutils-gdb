@@ -1,0 +1,44 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: stop before an if, print the compared value,
+# and next into the taken branch.
+
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c additional_flags=-O0}]} {
+    return -1
+}
+
+gdb_test_no_output "set startup-with-shell off"
+
+if {![runto_main]} {
+    return -1
+}
+
+# runto_main deletes breakpoints set before the run.
+set compare [gdb_get_line_number "if (value > 3)"]
+gdb_breakpoint $compare
+
+gdb_test "continue" "if \\(value > 3\\)" "stop before the comparison"
+gdb_test "print value" " = 7"
+gdb_test "next" "taken = 1;" "next follows the true branch"
+gdb_test "print taken" " = 0" "taken is still clear on the assignment"
+gdb_test "next" "return taken;" "step over the assignment"
+gdb_test "print taken" " = 1" "taken records the true branch"
+gdb_test "continue" "exited with code 01\\\]"
