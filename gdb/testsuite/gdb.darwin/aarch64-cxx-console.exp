@@ -1,0 +1,49 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: read an integer with std::cin.
+
+require allow_cplus_tests
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++ additional_flags=-O0}]} {
+    return -1
+}
+
+# /bin/sh is arm64e and cannot be copied out from under SIP.
+# With the shell disabled, "run < file" is not interpreted as
+# redirection.  An IDE delivers console input on the inferior tty.
+gdb_test_no_output "set startup-with-shell off"
+
+if {![gdb_breakpoint "main"]} {
+    return -1
+}
+gdb_breakpoint [gdb_get_line_number "return typed"]
+
+gdb_test "run" "int typed = 0;" "inferior started at main"
+gdb_test_multiple "continue" "continue to the value read from stdin" {
+    -re "Continuing\\.\r\n" {
+	send_inferior "42\n"
+	exp_continue
+    }
+    -re "return typed;.*\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+gdb_test "print typed" " = 42"
+gdb_test "continue" "exited with code 052\\\]"
