@@ -12519,7 +12519,10 @@ read_subroutine_type (struct die_info *die, struct dwarf2_cu *cu)
 		  const char *name = dwarf2_name (child_die, cu);
 
 		  attr = dwarf2_attr (die, DW_AT_object_pointer, cu);
-		  if (attr != nullptr)
+		  /* Apple clang emits DW_AT_object_pointer with
+		     DW_FORM_implicit_const 0 on declarations that have
+		     no parameter DIEs.  That is not a DIE reference.  */
+		  if (attr != nullptr && attr->form_is_ref ())
 		    {
 		      /* If the compiler emits this, use it.  */
 		      if (follow_die_ref (die, attr, &arg_cu) == child_die)
