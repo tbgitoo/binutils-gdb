@@ -1,0 +1,120 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: stdin, stdout, and the controlling terminal
+# of an inferior started with "set inferior-tty".
+
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .c
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug}]} {
+    return
+}
+
+# BUSY is true when another session already owns the pty.  Darwin
+# refuses TIOCSCTTY in that case; the inferior must still be able to
+# read and write the device.
+proc test_inferior_tty {busy} {
+    global binfile testfile gdb_prompt gdb_spawn_id decimal
+    global spawn_id spawn_out
+
+    clean_restart $testfile
+    gdb_test_no_output "set startup-with-shell off"
+    gdb_test_no_output "set pagination off"
+
+    spawn -pty
+    set inf_spawn_id $spawn_id
+    set inf_tty $spawn_out(slave,name)
+
+    set holder_pid ""
+    if {$busy} {
+	spawn $binfile hold $inf_tty
+	set holder_spawn_id $spawn_id
+	gdb_test_multiple "" "holder claimed the tty" {
+	    -i $inf_spawn_id -re "holding ($decimal)\r\n" {
+		set holder_pid $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+	catch {close -i $holder_spawn_id}
+	catch {wait -i $holder_spawn_id}
+    }
+
+    gdb_test_no_output "set inferior-tty $inf_tty" "set inferior-tty"
+
+    set saw_warning 0
+    set saw_owned 0
+    set saw_ctty ""
+    set saw_got 0
+    gdb_test_multiple "run" "inferior uses its tty" {
+	-i $inf_spawn_id -re "Failed to set controlling terminal" {
+	    set saw_warning 1
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "Another session already owns this device" {
+	    set saw_owned 1
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "ctty-ok\r\n" {
+	    set saw_ctty ok
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "ctty-none\r\n" {
+	    set saw_ctty none
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "Input b\r\n" {
+	    send -i $inf_spawn_id "42\n"
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "got 42\r\n" {
+	    set saw_got 1
+	    # Stop before the slave closes.  Waiting on this spawn id
+	    # after EOF raises "spawn id not open".
+	    if {$busy} {
+		set io_ok [expr {$saw_warning && $saw_owned
+				 && $saw_ctty eq "none"}]
+	    } else {
+		set io_ok [expr {!$saw_warning && $saw_ctty eq "ok"}]
+	    }
+	    if {$io_ok} {
+		pass $gdb_test_name
+	    } else {
+		fail "$gdb_test_name (warning=$saw_warning owned=$saw_owned ctty=$saw_ctty)"
+	    }
+	}
+    }
+
+    if {$saw_got} {
+	gdb_test_multiple "" "inferior exits after using its tty" {
+	    -re "exited normally.*$gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	}
+    }
+
+    if {$holder_pid ne ""} {
+	catch {exec kill -9 $holder_pid}
+    }
+    catch {close -i $inf_spawn_id}
+}
+
+with_test_prefix "free pty" {
+    test_inferior_tty 0
+}
+with_test_prefix "owned pty" {
+    test_inferior_tty 1
+}

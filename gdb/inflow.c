@@ -26,6 +26,7 @@
 #include "observable.h"
 #include <signal.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include "gdbsupport/gdb_select.h"
 
 #include "cli/cli-cmds.h"
@@ -855,12 +856,41 @@ new_tty (void)
     }
 
 #ifdef TIOCSCTTY
-  /* Make tty our new controlling terminal.  */
+  /* Make tty our new controlling terminal.  Mention GDB in the warning
+     because it appears on the inferior's terminal instead of GDB's.  */
   if (ioctl (tty, TIOCSCTTY, 0) == -1)
-    /* Mention GDB in warning because it will appear in the inferior's
-       terminal instead of GDB's.  */
-    warning (_("GDB: Failed to set controlling terminal: %s"),
+    {
+      int saved_errno = errno;
+
+#if defined (__APPLE__)
+      /* Darwin's TIOCSCTTY ignores the force argument.  A session leader
+	 is refused with EPERM when this device is already some other
+	 session's controlling terminal, or when this session already has
+	 one.  The descriptors above are still the device, so ordinary
+	 reads and writes work; Ctrl-C and job control stay with the
+	 session that owns it.  A pty slave that nobody has claimed is
+	 accepted, which is the case an IDE should set up.  */
+      if (saved_errno == EPERM && getsid (0) == getpid ())
+	warning (_("\
+GDB: Failed to set controlling terminal: %s.\n\
+Another session already owns this device, and Darwin will not\n\
+transfer it.  Standard input, output, and error are still\n\
+connected to the device, so the inferior can read and write it.\n\
+Job control and Ctrl-C remain with the owning session.  A pty\n\
+slave that no session has claimed does become the controlling\n\
+terminal."),
+		 safe_strerror (saved_errno));
+      else
+#endif
+	warning (_("GDB: Failed to set controlling terminal: %s"),
+		 safe_strerror (saved_errno));
+    }
+#if defined (__APPLE__)
+  else if (tcsetpgrp (tty, getpgrp ()) < 0)
+    warning (_("\
+GDB: Failed to put the inferior in the foreground process group: %s"),
 	     safe_strerror (errno));
+#endif
 #endif
 
   if (tty > 2)
