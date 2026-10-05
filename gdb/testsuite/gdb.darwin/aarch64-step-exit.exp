@@ -1,0 +1,102 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: stepping out of main must end in a normal
+# inferior exit, and a stop in the unsourced return path must not
+# invent a caller at address 1.
+
+require allow_cplus_tests
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++ additional_flags=-O0}]} {
+    return -1
+}
+
+gdb_test_no_output "set startup-with-shell off"
+gdb_test_no_output "set pagination off"
+
+if {![runto_main]} {
+    return -1
+}
+
+set steps 0
+gdb_test_multiple "next" "stepping out of main exits normally" {
+    -re "corrupt stack|identical to this frame|Cannot find bounds of current function|in \\?\\? \\(\\)" {
+	fail $gdb_test_name
+    }
+    -re "exited normally.*$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+    -re "$gdb_prompt $" {
+	incr steps
+	if {$steps > 12} {
+	    fail "$gdb_test_name (no exit)"
+	} else {
+	    send_gdb "next\n"
+	    exp_continue
+	}
+    }
+}
+
+# Stop in the unsourced return path and check the backtrace.  step-mode
+# keeps the stop that a normal next now runs through.
+gdb_test_no_output "set step-mode on" "stop in code without line info"
+if {![runto_main]} {
+    return -1
+}
+
+set at_return 0
+set steps 0
+gdb_test_multiple "next" "reach the return from main" {
+    -re "return 0;.*$gdb_prompt $" {
+	pass $gdb_test_name
+	set at_return 1
+    }
+    -re "exited normally.*$gdb_prompt $" {
+	fail $gdb_test_name
+    }
+    -re "$gdb_prompt $" {
+	incr steps
+	if {$steps > 8} {
+	    fail "$gdb_test_name (return not reached)"
+	} else {
+	    send_gdb "next\n"
+	    exp_continue
+	}
+    }
+}
+
+if {$at_return == 1} {
+    gdb_test_multiple "next" "leave main with step-mode" {
+	-re "in \\?\\? \\(\\).*$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+	-re "exited normally.*$gdb_prompt $" {
+	    fail "$gdb_test_name (ran to exit)"
+	}
+    }
+    gdb_test_multiple "bt" "return from main is the outermost frame" {
+	-re "corrupt stack|identical to this frame|#1\[^\r\n\]*\\y0x0*1\\y" {
+	    fail $gdb_test_name
+	}
+	-re "#0\[^\r\n\]+\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+    gdb_test "continue" "exited normally\\\]"
+}

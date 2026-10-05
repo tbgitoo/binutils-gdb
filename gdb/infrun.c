@@ -8174,6 +8174,31 @@ process_event_stop_test (struct execution_control_state *ecs)
      inline_skipped_frames.  */
   stop_pc_sal = find_sal_for_pc (ecs->event_thread->stop_pc (), 0);
 
+  /* Returned from the frame we were stepping into code that has neither
+     a symbol nor a line.  On Darwin that is dyld's return site after
+     main: the PC is real, but a further next errors with "Cannot find
+     bounds of current function".  The runtime calls exit from here, so
+     finish the step by running until that exit or a breakpoint.
+     step-mode still stops, so the instruction stream remains reachable.  */
+  if (execution_direction == EXEC_FORWARD
+      && ecs->event_thread->control.step_over_calls != STEP_OVER_NONE
+      && !step_stop_if_no_debug
+      && ecs->stop_func_name == nullptr
+      && stop_pc_sal.line == 0
+      && frame_id_p (ecs->event_thread->control.step_stack_frame_id)
+      && get_stack_frame_id (frame)
+	 != ecs->event_thread->control.step_stack_frame_id
+      && frame_find_by_id (ecs->event_thread->control.step_stack_frame_id)
+	 == nullptr)
+    {
+      infrun_debug_printf
+	("step frame is gone and the stop PC has no symbol");
+      ecs->event_thread->control.step_range_start = 0;
+      ecs->event_thread->control.step_range_end = 0;
+      keep_going (ecs);
+      return;
+    }
+
   /* NOTE: tausq/2004-05-24: This if block used to be done before all
      the trampoline processing logic, however, there are some trampolines
      that have no names, so we should do trampoline handling first.  */

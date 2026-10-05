@@ -1188,7 +1188,18 @@ prepare_one_step (thread_info *tp, struct step_command_fsm *sm)
 	      if (find_pc_partial_function (pc, &name,
 					    &tp->control.step_range_start,
 					    &tp->control.step_range_end) == 0)
-		error (_("Cannot find bounds of current function"));
+		{
+		  /* Forward of a return into the runtime (dyld on Darwin)
+		     has no function bounds.  Running reaches process exit
+		     or a breakpoint.  Reverse still has nowhere to go.  */
+		  if (execution_direction == EXEC_FORWARD)
+		    {
+		      tp->control.step_range_start = 0;
+		      tp->control.step_range_end = 0;
+		      return 0;
+		    }
+		  error (_("Cannot find bounds of current function"));
+		}
 
 	      target_terminal::ours_for_output ();
 	      gdb_printf (_("Single stepping until exit from function %s,"

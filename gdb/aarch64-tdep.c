@@ -1051,8 +1051,11 @@ aarch64_scan_prologue (const frame_info_ptr &this_frame,
 
       cache->framereg = AARCH64_FP_REGNUM;
       cache->framesize = 16;
-      cache->saved_regs[29].set_addr (0);
-      cache->saved_regs[30].set_addr (8);
+      /* Offsets are from the caller's SP, as in aarch64_analyze_prologue.
+	 stp x29, x30, [sp, #-16]! leaves the saved fp at CFA-16 and the
+	 saved lr at CFA-8.  */
+      cache->saved_regs[29].set_addr (-16);
+      cache->saved_regs[30].set_addr (-8);
     }
 }
 
@@ -1142,6 +1145,27 @@ aarch64_prologue_frame_unwind_stop_reason (const frame_info_ptr &this_frame,
   /* We've hit a wall, stop.  */
   if (cache->prev_sp == 0)
     return UNWIND_OUTERMOST;
+
+  /* The caller's PC is the unwound link register, not cache->prev_pc
+     (that field is this frame's PC, kept for prologue analysis).
+     Darwin's dyld ends the chain with a saved LR of 0 or 1, and the
+     words above that are not code (the Mach-O header is a common
+     stray value).  Building a frame there repeats an id or reports a
+     corrupt stack.  */
+  try
+    {
+      CORE_ADDR caller_pc
+	= frame_unwind_register_unsigned (this_frame, AARCH64_PC_REGNUM);
+      if (caller_pc <= tdep->lowest_pc
+	  || find_pc_section (caller_pc) == nullptr)
+	return UNWIND_OUTERMOST;
+    }
+  catch (const gdb_exception_error &ex)
+    {
+      if (ex.error == NOT_AVAILABLE_ERROR)
+	return UNWIND_UNAVAILABLE;
+      throw;
+    }
 
   return UNWIND_NO_REASON;
 }
