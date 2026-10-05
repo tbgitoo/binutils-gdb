@@ -1,0 +1,48 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: /bin/sh is arm64e.  GDB must say why
+# startup-with-shell cannot be used, and the inferior must still run.
+
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug}]} {
+    return -1
+}
+
+gdb_test_no_output "set startup-with-shell on"
+gdb_test_no_output "set pagination off"
+
+set saw_arm64e 0
+set saw_disabled 0
+gdb_test_multiple "run" "arm64e shell is not used to launch the inferior" {
+    -re "The shell \[^\r\n\]* is arm64e\\." {
+	set saw_arm64e 1
+	exp_continue
+    }
+    -re "startup-with-shell is now temporarily disabled" {
+	set saw_disabled 1
+	exp_continue
+    }
+    -re "exited normally.*$gdb_prompt $" {
+	if {$saw_arm64e && $saw_disabled} {
+	    pass $gdb_test_name
+	} else {
+	    fail "$gdb_test_name (arm64e=$saw_arm64e disabled=$saw_disabled)"
+	}
+    }
+}

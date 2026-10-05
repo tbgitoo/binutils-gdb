@@ -1981,13 +1981,24 @@ The error was: %s"),
       return false;
     }
 
-  /* If a binary is arm64e, it needs to be signed by Apple(?). Thus, we skip
-   * our SIP bypass if it is indeed arm64e. */
+  /* arm64e executables run only with an Apple signature.  Copying
+     /bin/sh off the SIP volume produces an image the kernel kills
+     (SIGKILL) before main, so the copy cannot be traced.  The original
+     is SF_RESTRICTED and ptrace of it is denied.  The x86_64 slice would
+     run only under Rosetta, and this target fetches ARM thread state
+     while the shell is still the inferior.  Quoting, globbing,
+     redirection, and pipelines therefore stay unavailable.
+     "set inferior-tty" is applied in the child around exec and does not
+     use the shell.  */
   if (is_bfd_arm64e (abfd))
     {
-      warning ("The shell is arm64e.\n\
-This means that we will not be able to run the process with a shell on this \
-device");
+      warning (_("The shell (%s) is arm64e.\n\
+macOS will not run a copied arm64e shell, and System Integrity\n\
+Protection prevents tracing the original.  startup-with-shell cannot\n\
+quote arguments, expand globs, redirect files, or run pipelines on\n\
+this device.  The inferior is executed directly.  \"set inferior-tty\"\n\
+still applies.  To skip this attempt, use \"set startup-with-shell off\"."),
+	       shell);
       bfd_close (abfd);
       return false;
     }
