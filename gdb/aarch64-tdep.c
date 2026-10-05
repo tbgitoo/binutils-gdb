@@ -1249,6 +1249,29 @@ static const frame_unwind_legacy aarch64_prologue_unwind (
   default_frame_sniffer
 );
 
+/* Return true if PC is in a Mach-O symbol-stub section.
+
+   These stubs are Darwin's equivalent of one ELF PLT slot: a few
+   instructions that branch through the GOT and do not allocate a
+   frame.  in_plt_section does not match them.  Their BFD section name
+   is "__TEXT.__stubs", or an authenticated or legacy variant.  */
+
+static bool
+aarch64_in_macho_stub_section (CORE_ADDR pc)
+{
+  struct obj_section *section = find_pc_section (pc);
+
+  if (section == nullptr || section->the_bfd_section == nullptr)
+    return false;
+
+  const char *name = bfd_section_name (section->the_bfd_section);
+
+  return (streq (name, "__TEXT.__stubs")
+	  || streq (name, "__TEXT.__auth_stubs")
+	  || streq (name, "__TEXT.__symbol_stub")
+	  || streq (name, "__TEXT.__symbol_stub1"));
+}
+
 /* Allocate and fill in *THIS_CACHE with information about the prologue of
    *THIS_FRAME.  Do not do this is if *THIS_CACHE was already allocated.
    Return a pointer to the current aarch64_prologue_cache in
@@ -1269,6 +1292,12 @@ aarch64_make_stub_cache (const frame_info_ptr &this_frame, void **this_cache)
       cache->prev_sp = get_frame_register_unsigned (this_frame,
 						    AARCH64_SP_REGNUM);
       cache->prev_pc = get_frame_pc (this_frame);
+      /* A Mach-O stub does not save LR.  The live link register is the
+	 return address, so the caller (for example main, during next
+	 across an external call) stays on the stack.  ELF PLT entries
+	 are left unchanged.  */
+      if (aarch64_in_macho_stub_section (cache->prev_pc))
+	cache->saved_regs[AARCH64_LR_REGNUM].set_realreg (AARCH64_LR_REGNUM);
       cache->available_p = 1;
     }
   catch (const gdb_exception_error &ex)
@@ -1322,6 +1351,7 @@ aarch64_stub_unwind_sniffer (const struct frame_unwind *self,
 
   addr_in_block = get_frame_address_in_block (this_frame);
   if (in_plt_section (addr_in_block)
+      || aarch64_in_macho_stub_section (addr_in_block)
       /* We also use the stub winder if the target memory is unreadable
 	 to avoid having the prologue unwinder trying to read it.  */
       || target_read_memory (get_frame_pc (this_frame), dummy, 4) != 0)

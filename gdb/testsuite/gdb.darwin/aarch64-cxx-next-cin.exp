@@ -1,0 +1,183 @@
+# Copyright 2026 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Native AArch64 Darwin: source-level next across a blocking cin must
+# stop on the following line of main.  A breakpoint on that line is a
+# separate control and is not required for next.
+
+require allow_cplus_tests
+require {istarget "aarch64*-*-darwin*"}
+
+standard_testfile .cc
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug c++ additional_flags=-O0}]} {
+    return -1
+}
+
+# Start a fresh inferior whose stdin and stdout are a pty this test
+# owns.  Returns 1 and sets INF_SPAWN_ID when the inferior is stopped
+# on the cin line with no user breakpoints left.  The "Input b: "
+# prompt is left unread so the caller can answer it while a command
+# is pending.
+proc start_cin_inferior {inf_spawn_id_var} {
+    global testfile
+    global spawn_id spawn_out
+    upvar $inf_spawn_id_var inf_spawn_id
+
+    clean_restart $testfile
+    gdb_test_no_output "set startup-with-shell off"
+    gdb_test_no_output "set pagination off"
+    gdb_test_no_output "set confirm off"
+
+    spawn -pty
+    set inf_spawn_id $spawn_id
+    set inf_tty $spawn_out(slave,name)
+    gdb_test_no_output "set inferior-tty $inf_tty" "set inferior-tty"
+
+    set cin_line [gdb_get_line_number "cin >> b"]
+    if {![runto $cin_line]} {
+	catch {close -i $inf_spawn_id}
+	return 0
+    }
+
+    # runto planted a breakpoint on the cin line.  Remove it so the
+    # following source line is reached only by next or by a breakpoint
+    # the caller sets itself.
+    gdb_test_no_output "delete breakpoints" "delete the cin breakpoint"
+    return 1
+}
+
+# Primary case: next is pending while cin waits, and no breakpoint is
+# set on the source line after the read.
+proc test_next_across_cin {} {
+    global gdb_prompt gdb_spawn_id
+
+    set inf_spawn_id ""
+    if {![start_cin_inferior inf_spawn_id]} {
+	return
+    }
+    set answered 0
+    set stopped 0
+    gdb_test_multiple "next" "next across cin stops at the next line" {
+	-i $inf_spawn_id -re "Input b: " {
+	    set answered 1
+	    send -i $inf_spawn_id "12\n"
+	    exp_continue
+	}
+	-i $inf_spawn_id -re "a is smaller" {
+	    fail "$gdb_test_name (ran through the branch)"
+	}
+	-i $gdb_spawn_id -re "exited normally.*$gdb_prompt $" {
+	    fail "$gdb_test_name (inferior exited)"
+	}
+	-i $gdb_spawn_id -re "if \\(a < b\\).*\r\n$gdb_prompt $" {
+	    if {$answered} {
+		pass $gdb_test_name
+		set stopped 1
+	    } else {
+		fail "$gdb_test_name (stopped before input was supplied)"
+	    }
+	}
+    }
+
+    if {$stopped} {
+	gdb_test "print a" " = 5" "a is unchanged after cin"
+	gdb_test "print b" " = 12" "b was read from the inferior tty"
+	gdb_test "next" "a is smaller\[^\r\n\]*" "next enters the true branch"
+	# Read the branch text from the pty before the slave closes, then
+	# wait for GDB alone.  Leaving the pty unread can leave the
+	# inferior blocked in the write, and expecting on it after EOF
+	# raises "spawn id not open".
+	set saw_branch 0
+	gdb_test_multiple "continue" "branch text reaches the inferior tty" {
+	    -i $inf_spawn_id -re "a is smaller\r\n" {
+		set saw_branch 1
+		pass $gdb_test_name
+	    }
+	    -i $gdb_spawn_id -re "exited normally.*$gdb_prompt $" {
+		fail "$gdb_test_name (exited before branch text)"
+	    }
+	}
+	if {$saw_branch} {
+	    gdb_test_multiple "" "inferior exits after next across cin" {
+		-re "exited normally.*$gdb_prompt $" {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+    }
+
+    catch {close -i $inf_spawn_id}
+}
+
+# Control: an explicit breakpoint on the line after cin still hits.
+# This must not be what makes the primary next test pass.
+proc test_breakpoint_after_cin {} {
+    global gdb_prompt gdb_spawn_id
+
+    set inf_spawn_id ""
+    if {![start_cin_inferior inf_spawn_id]} {
+	return
+    }
+
+    set if_line [gdb_get_line_number "if (a < b)"]
+    gdb_breakpoint $if_line
+
+    set stopped 0
+    gdb_test_multiple "continue" "breakpoint after cin still hits" {
+	-i $inf_spawn_id -re "Input b: " {
+	    send -i $inf_spawn_id "12\n"
+	    exp_continue
+	}
+	-i $gdb_spawn_id -re "if \\(a < b\\).*\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	    set stopped 1
+	}
+	-i $gdb_spawn_id -re "exited normally.*$gdb_prompt $" {
+	    fail "$gdb_test_name (inferior exited)"
+	}
+    }
+
+    if {$stopped} {
+	gdb_test "print b" " = 12" "breakpoint stop sees the value read"
+	set saw_branch 0
+	gdb_test_multiple "continue" "breakpoint control reaches the branch text" {
+	    -i $inf_spawn_id -re "a is smaller\r\n" {
+		set saw_branch 1
+		pass $gdb_test_name
+	    }
+	    -i $gdb_spawn_id -re "exited normally.*$gdb_prompt $" {
+		fail "$gdb_test_name (exited before branch text)"
+	    }
+	}
+	if {$saw_branch} {
+	    gdb_test_multiple "" "inferior exits after the breakpoint control" {
+		-re "exited normally.*$gdb_prompt $" {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+    }
+
+    catch {close -i $inf_spawn_id}
+}
+
+with_test_prefix "next" {
+    test_next_across_cin
+}
+with_test_prefix "breakpoint" {
+    test_breakpoint_after_cin
+}
