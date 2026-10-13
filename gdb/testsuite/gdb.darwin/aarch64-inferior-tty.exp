@@ -27,7 +27,9 @@ if {[build_executable "failed to prepare" $testfile $srcfile {debug}]} {
 # BUSY is true when another session already owns the pty.  Darwin
 # refuses TIOCSCTTY in that case; the inferior must still be able to
 # read and write the device.
-proc test_inferior_tty {busy} {
+# CLAIM_OFF is true when "set inferior-tty-claim off" is in effect: I/O
+# still works and no controlling-terminal warning is printed.
+proc test_inferior_tty {busy claim_off} {
     global binfile testfile gdb_prompt gdb_spawn_id decimal
     global spawn_id spawn_out
 
@@ -51,6 +53,11 @@ proc test_inferior_tty {busy} {
 	}
 	catch {close -i $holder_spawn_id}
 	catch {wait -i $holder_spawn_id}
+    }
+
+    if {$claim_off} {
+	gdb_test_no_output "set inferior-tty-claim off" \
+	    "set inferior-tty-claim off"
     }
 
     gdb_test_no_output "set inferior-tty $inf_tty" "set inferior-tty"
@@ -84,7 +91,10 @@ proc test_inferior_tty {busy} {
 	    set saw_got 1
 	    # Stop before the slave closes.  Waiting on this spawn id
 	    # after EOF raises "spawn id not open".
-	    if {$busy} {
+	    if {$claim_off} {
+		set io_ok [expr {!$saw_warning && !$saw_owned
+				 && $saw_ctty eq "none"}]
+	    } elseif {$busy} {
 		set io_ok [expr {$saw_warning && $saw_owned
 				 && $saw_ctty eq "none"}]
 	    } else {
@@ -113,8 +123,11 @@ proc test_inferior_tty {busy} {
 }
 
 with_test_prefix "free pty" {
-    test_inferior_tty 0
+    test_inferior_tty 0 0
 }
 with_test_prefix "owned pty" {
-    test_inferior_tty 1
+    test_inferior_tty 1 0
+}
+with_test_prefix "owned pty claim off" {
+    test_inferior_tty 1 1
 }

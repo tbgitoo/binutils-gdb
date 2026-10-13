@@ -53,6 +53,22 @@ static void pass_signal (int);
 static int gdb_has_a_terminal (void);
 
 static void child_terminal_ours_1 (target_terminal_state);
+
+/* When true (default), new_tty() attempts TIOCSCTTY so the inferior's
+   tty becomes the controlling terminal.  When false, standard input,
+   output, and error are still redirected to that tty, but GDB does not
+   try to claim it.  IDEs that attach a pty another session already owns
+   (for example Terminal.app with a sleep holder) set this off.  */
+static bool inferior_tty_claim = true;
+
+static void
+show_inferior_tty_claim (struct ui_file *file, int from_tty,
+			 struct cmd_list_element *c, const char *value)
+{
+  gdb_printf (file,
+	      _("Claiming the inferior's tty as controlling terminal is %s.\n"),
+	      value);
+}
 
 /* Record terminal status separately for debugger and inferior.  */
 
@@ -856,22 +872,26 @@ new_tty (void)
     }
 
 #ifdef TIOCSCTTY
-  /* Make tty our new controlling terminal.  Mention GDB in the warning
-     because it appears on the inferior's terminal instead of GDB's.  */
-  if (ioctl (tty, TIOCSCTTY, 0) == -1)
+  /* Make tty our new controlling terminal unless the user (or an IDE)
+     asked only for I/O redirection.  Mention GDB in the warning because
+     it appears on the inferior's terminal instead of GDB's.  */
+  if (inferior_tty_claim)
     {
-      int saved_errno = errno;
+      if (ioctl (tty, TIOCSCTTY, 0) == -1)
+	{
+	  int saved_errno = errno;
 
 #if defined (__APPLE__)
-      /* Darwin's TIOCSCTTY ignores the force argument.  A session leader
-	 is refused with EPERM when this device is already some other
-	 session's controlling terminal, or when this session already has
-	 one.  The descriptors above are still the device, so ordinary
-	 reads and writes work; Ctrl-C and job control stay with the
-	 session that owns it.  A pty slave that nobody has claimed is
-	 accepted, which is the case an IDE should set up.  */
-      if (saved_errno == EPERM && getsid (0) == getpid ())
-	warning (_("\
+	  /* Darwin's TIOCSCTTY ignores the force argument.  A session
+	     leader is refused with EPERM when this device is already
+	     some other session's controlling terminal, or when this
+	     session already has one.  The descriptors above are still
+	     the device, so ordinary reads and writes work; Ctrl-C and
+	     job control stay with the session that owns it.  A pty
+	     slave that nobody has claimed is accepted, which is the
+	     case an IDE should set up.  */
+	  if (saved_errno == EPERM && getsid (0) == getpid ())
+	    warning (_("\
 GDB: Failed to set controlling terminal: %s.\n\
 Another session already owns this device, and Darwin will not\n\
 transfer it.  Standard input, output, and error are still\n\
@@ -879,18 +899,19 @@ connected to the device, so the inferior can read and write it.\n\
 Job control and Ctrl-C remain with the owning session.  A pty\n\
 slave that no session has claimed does become the controlling\n\
 terminal."),
-		 safe_strerror (saved_errno));
-      else
+		     safe_strerror (saved_errno));
+	  else
 #endif
-	warning (_("GDB: Failed to set controlling terminal: %s"),
-		 safe_strerror (saved_errno));
-    }
+	    warning (_("GDB: Failed to set controlling terminal: %s"),
+		     safe_strerror (saved_errno));
+	}
 #if defined (__APPLE__)
-  else if (tcsetpgrp (tty, getpgrp ()) < 0)
-    warning (_("\
+      else if (tcsetpgrp (tty, getpgrp ()) < 0)
+	warning (_("\
 GDB: Failed to put the inferior in the foreground process group: %s"),
-	     safe_strerror (errno));
+		 safe_strerror (errno));
 #endif
+    }
 #endif
 
   if (tty > 2)
@@ -999,6 +1020,19 @@ INIT_GDB_FILE (inflow)
 {
   add_info ("terminal", info_terminal_command,
 	    _("Print inferior's saved terminal status."));
+
+  add_setshow_boolean_cmd ("inferior-tty-claim", class_run,
+			   &inferior_tty_claim, _("\
+Set whether GDB claims the inferior tty as controlling terminal."), _("\
+Show whether GDB claims the inferior tty as controlling terminal."), _("\
+When on (the default), GDB attempts to make the inferior's tty the\n\
+controlling terminal via TIOCSCTTY.  When off, GDB still redirects\n\
+standard input, output, and error to that tty, but does not attempt\n\
+to claim it.  Use off when another session already owns the device\n\
+(for example an IDE that attaches a Terminal.app pty held by sleep)."),
+			   nullptr,
+			   show_inferior_tty_claim,
+			   &setlist, &showlist);
 
   /* OK, figure out whether we have job control.  */
   have_job_control ();
