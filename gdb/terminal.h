@@ -29,6 +29,13 @@ extern void new_tty (void);
 
 extern void new_tty_postfork (void);
 
+/* When true, run/start unbuffer inferior stdout at main (IDE Debug).  */
+extern bool inferior_stdio_unbuffered;
+
+/* Arm the one-shot main action.  STOP_AT_MAIN true means `start` (leave
+   stopped after unbuffering); false means `run` (unbuffer then continue).  */
+extern void maybe_arm_inferior_stdio_unbuffered (bool stop_at_main);
+
 extern void copy_terminal_info (struct inferior *to, struct inferior *from);
 
 /* Exchange the terminal info and state between inferiors A and B.  */

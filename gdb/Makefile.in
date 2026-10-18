@@ -1130,6 +1130,7 @@ COMMON_SFILES = \
 	infcall.c \
 	infcmd.c \
 	inferior.c \
+	inferior-stdio-unbuffered.c \
 	inflow.c \
 	infrun.c \
 	inline-frame.c \

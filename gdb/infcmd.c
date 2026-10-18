@@ -32,6 +32,7 @@
 #include "symfile.h"
 #include "gdbcore.h"
 #include "target.h"
+#include "terminal.h"
 #include "language.h"
 #include "objfiles.h"
 #include "completer.h"
@@ -581,6 +582,11 @@ run_command_1 (const char *args, int from_tty, enum run_how run_how)
 				       current_inferior ()->num);
       tbreak_command (arg.c_str (), 0);
     }
+
+  /* Optional IDE Debug aid: unbuffer C stdout at main (companion Darwin
+     GDB).  Attach to the start tbreak, or plant a silent run-only tbreak.  */
+  if (run_how == RUN_STOP_AT_MAIN || run_how == RUN_NORMAL)
+    maybe_arm_inferior_stdio_unbuffered (run_how == RUN_STOP_AT_MAIN);
 
   const char *exec_file = current_program_space->exec_filename ();
 
