@@ -32,6 +32,7 @@
 #include "gdbthread.h"
 #include "regcache.h"
 #include "event-top.h"
+#include "extension.h"
 #include "inf-loop.h"
 #include "gdbsupport/common-inferior.h"
 #include <sys/stat.h>
@@ -363,10 +364,25 @@ darwin_nat_target::check_new_threads (inferior *inf)
 	}
       if (old_ix < old_nbr && (new_ix == new_nbr || new_id > old_id))
 	{
-	  /* A thread was removed.  */
-	  struct thread_info *thr
-	    = this->find_thread (ptid_t (inf->pid, 0, old_id));
-	  delete_thread (thr);
+	  /* A thread was removed.  find_thread skips threads already
+	     marked exited, so a helper thread that AppKit created and
+	     dropped (a key event, while stepping the event loop) can
+	     be in this list and absent from the live map.  Deleting a
+	     null thread_info aborts.  */
+	  class thread_info *thr = nullptr;
+	  for (class thread_info &tp : inf->threads ())
+	    if (tp.ptid.pid () == inf->pid
+		&& tp.ptid.tid () == (ptid_t::tid_type) old_id)
+	      {
+		thr = &tp;
+		break;
+	      }
+	  if (thr != nullptr)
+	    delete_thread (thr);
+	  else
+	    inferior_debug
+	      (4, _("darwin: mach thread 0x%x has no gdb thread\n"),
+	       old_id);
 	  kret = mach_port_deallocate (gdb_task, old_id);
 	  MACH_CHECK_ERROR (kret);
 	  old_ix++;
@@ -1197,6 +1213,51 @@ darwin_nat_target::cancel_breakpoint (inferior *inf, ptid_t ptid)
   return 0;
 }
 
+/* kill() calls wait_1 to collect SIGKILL.  A pending Ctrl-C must not
+   be turned into a stop there, or the process is never reaped.  */
+
+static bool darwin_in_kill;
+
+/* Set from interrupt(), or from a memory read that noticed quit_flag.
+   The SIGINT handler clears quit_flag before this wait can see it, and
+   the inferior does not report the interrupt for several seconds while
+   shared libraries are still being read.  This flag makes the next wait
+   stop at once.  */
+
+static volatile sig_atomic_t darwin_stop_requested;
+
+/* Present a user interrupt as a stop.  The caller still suspends the
+   task and drains messages; this only chooses the status.  */
+
+static ptid_t
+darwin_interrupted_ptid (struct target_waitstatus *status)
+{
+  for (inferior *inf : all_inferiors ())
+    {
+      darwin_inferior *priv = get_darwin_inferior (inf);
+      if (priv == nullptr || priv->threads.empty ())
+	continue;
+
+      /* The event must belong to the thread infrun is stepping.
+	 Reporting another thread while a step-over is in progress
+	 trips finish_step_over's trap_expected assertion.  */
+      ptid_t ptid (inf->pid, 0, priv->threads[0]->gdb_port);
+      for (class thread_info &tp : inf->non_exited_threads ())
+	if (tp.control.trap_expected)
+	  {
+	    ptid = tp.ptid;
+	    break;
+	  }
+
+      status->set_stopped (GDB_SIGNAL_INT);
+      inferior_debug
+	(2, _("darwin_wait: interrupted, stopping pid=%d\n"), inf->pid);
+      return ptid;
+    }
+
+  return minus_one_ptid;
+}
+
 ptid_t
 darwin_nat_target::wait_1 (ptid_t ptid, struct target_waitstatus *status)
 {
@@ -1228,9 +1289,26 @@ darwin_nat_target::wait_1 (ptid_t ptid, struct target_waitstatus *status)
       return ptid_t (inf->pid, 0, thread->gdb_port);
     }
 
+  res = minus_one_ptid;
   do
     {
       /* set_sigint_trap (); */
+
+      /* A Ctrl-C that arrived while the previous event was handled
+	 never reaches this mach_msg as an interrupt: the port already
+	 has the next exception.  Honor it before waiting again, or a
+	 long single-step (shared-library loads, an AppKit call) keeps
+	 running after the user asked to stop.  check_quit_flag covers
+	 the case where the SIGINT handler only set quit_flag, because
+	 the inferior was stopped and interrupt() was not called.  */
+      if (!darwin_in_kill
+	  && (darwin_stop_requested || check_quit_flag ()))
+	{
+	  darwin_stop_requested = 0;
+	  res = darwin_interrupted_ptid (status);
+	  if (res != minus_one_ptid)
+	    break;
+	}
 
       /* Wait for a message.  */
       kret = mach_msg (&msgin.hdr, MACH_RCV_MSG | MACH_RCV_INTERRUPT, 0,
@@ -1240,6 +1318,22 @@ darwin_nat_target::wait_1 (ptid_t ptid, struct target_waitstatus *status)
 
       if (kret == MACH_RCV_INTERRUPTED)
 	{
+	  /* SIGINT arrived while we were blocked in mach_msg.  A GUI
+	     inferior often never reports that interrupt: the signal
+	     sits blocked inside a window-server call, and waiting for
+	     it here never returns.  Suspend the task and present the
+	     interrupt now, so the prompt comes back.  */
+	  if (!darwin_in_kill && (darwin_stop_requested || check_quit_flag ()))
+	    {
+	      darwin_stop_requested = 0;
+	      res = darwin_interrupted_ptid (status);
+	      if (res != minus_one_ptid)
+		break;
+	    }
+
+	  if (darwin_in_kill)
+	    continue;
+
 	  status->set_ignore ();
 	  return minus_one_ptid;
 	}
@@ -1263,6 +1357,19 @@ darwin_nat_target::wait_1 (ptid_t ptid, struct target_waitstatus *status)
       /* Early return in case an inferior has exited.  */
       if (inf == NULL)
 	return res;
+
+      /* The message already queued was not the user's interrupt.
+	 Report the interrupt instead of handing this event back to
+	 infrun, which would single-step and resume.  */
+      if (!darwin_in_kill && darwin_stop_requested
+	  && status->kind () == TARGET_WAITKIND_STOPPED)
+	{
+	  darwin_stop_requested = 0;
+	  status->set_stopped (GDB_SIGNAL_INT);
+	  inferior_debug
+	    (2, _("darwin_wait: interrupt requested during event\n"));
+	  break;
+	}
     }
   while (status->kind () == TARGET_WAITKIND_IGNORE);
 
@@ -1329,6 +1436,16 @@ darwin_nat_target::wait (ptid_t ptid, struct target_waitstatus *status,
 }
 
 void
+darwin_nat_target::pass_ctrlc ()
+{
+  /* child_pass_ctrlc sends SIGINT to the inferior.  That signal is
+     not reported until the current shared-library load finishes, and
+     sending it while mach_vm_read is in progress deadlocks the read.
+     Remember the request instead.  wait_1 turns it into a stop.  */
+  darwin_stop_requested = 1;
+}
+
+void
 darwin_nat_target::interrupt ()
 {
   struct inferior *inf = current_inferior ();
@@ -1336,7 +1453,12 @@ darwin_nat_target::interrupt ()
 
   /* FIXME: handle in no_ptrace mode.  */
   gdb_assert (!priv->no_ptrace);
-  ::kill (inf->pid, SIGINT);
+  /* Record the request and let wait_1 stop the task.  Sending SIGINT
+     to the inferior from here deadlocks when this handler runs during
+     mach_vm_read: the kernel reports the signal as an exception on our
+     port, and the read waits for a reply that this thread cannot send
+     until the read returns.  */
+  darwin_stop_requested = 1;
 }
 
 /* Deallocate threads port and vector.  */
@@ -1535,6 +1657,17 @@ darwin_nat_target::kill ()
     return;
 
   gdb_assert (inf != NULL);
+
+  /* wait_1 must keep collecting the death even if Ctrl-C is still set.  */
+  struct scoped_in_kill
+  {
+    scoped_in_kill () { darwin_in_kill = true; }
+    ~scoped_in_kill ()
+    {
+      darwin_in_kill = false;
+      darwin_stop_requested = 0;
+    }
+  } in_kill;
 
   kret = darwin_restore_exception_ports (priv);
   MACH_CHECK_ERROR (kret);
@@ -2414,6 +2547,19 @@ darwin_nat_target::xfer_partial (enum target_object object, const char *annex,
     {
     case TARGET_OBJECT_MEMORY:
       {
+	/* Ctrl-C during a symbol read never reaches wait_1 until this
+	   load finishes.  On this target that load walks every system
+	   library and takes several seconds.  Fail the read so the
+	   command gets back to wait_1, which reports the interrupt.
+	   Leave the flag set: later reads in the same command must
+	   fail too, or the walk continues.  */
+	if (!darwin_in_kill
+	    && (darwin_stop_requested || check_quit_flag ()))
+	  {
+	    darwin_stop_requested = 1;
+	    return TARGET_XFER_E_IO;
+	  }
+
 	int l = darwin_read_write_inferior (priv->task, offset,
 					    readbuf, writebuf, len);
 

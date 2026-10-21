@@ -1629,11 +1629,11 @@ check_no_tracepoint_commands (struct command_line *commands)
       /* Not that command parsing removes leading whitespace and comment
 	 lines and also empty lines.  So, we only need to check for
 	 command directly.  */
-      if (strstr (c->line, "collect ") == c->line)
+      if (c->line != nullptr && strstr (c->line, "collect ") == c->line)
 	error (_("The \"%ps\" command can only be used for tracepoints"),
 	       styled_string (command_style.style (), "collect"));
 
-      if (strstr (c->line, "teval ") == c->line)
+      if (c->line != nullptr && strstr (c->line, "teval ") == c->line)
 	error (_("The \"%ps\" command can only be used for tracepoints"),
 	       styled_string (command_style.style (), "teval"));
     }

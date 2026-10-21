@@ -196,8 +196,11 @@ attach_unbuffer_actions (struct breakpoint *b, bool auto_continue)
   command_line *cmd
     = new command_line (simple_control,
 			xstrdup ("_inferior_stdio_unbuffer_stdout"));
+  /* A continue_control node has no command text.  The breakpoint
+     command checker calls strstr on that text and crashes.  "continue"
+     is an ordinary breakpoint command.  */
   if (auto_continue)
-    cmd->next = new command_line (continue_control);
+    cmd->next = new command_line (simple_control, xstrdup ("continue"));
 
   breakpoint_set_commands (b,
 			   counted_command_line (cmd, command_lines_deleter ()));

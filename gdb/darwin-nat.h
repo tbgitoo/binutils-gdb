@@ -94,6 +94,8 @@ class darwin_nat_target : public inf_child_target
 
   void interrupt () override;
 
+  void pass_ctrlc () override;
+
   void resume (ptid_t, int , enum gdb_signal) override;
 
   bool thread_alive (ptid_t ptid) override;
