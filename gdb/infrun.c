@@ -8768,6 +8768,24 @@ keep_going_stepped_thread (struct thread_info *tp)
       clear_step_over_info ();
       tp->control.trap_expected = 0;
 
+      /* next/step over a call resumes every thread.  This one can run
+	 ahead while another thread is stepped past a breakpoint.  That
+	 is not an unreported trap: the thread really executed.  A
+	 single-step breakpoint planted at the new PC fires at once and
+	 is reported as a random SIGTRAP, which abandons the command
+	 and leaves the program stopped inside the call.  On a GUI
+	 program that call is often a window-server wait, and killing
+	 the process there locks up the desktop.  The step-resume
+	 breakpoint is still the right place to stop.  */
+      if (tp->control.step_resume_breakpoint != nullptr)
+	{
+	  infrun_debug_printf
+	    ("step-resume breakpoint still set, continuing");
+	  tp->set_stop_signal (GDB_SIGNAL_0);
+	  keep_going_pass_signal (&ecs);
+	  return true;
+	}
+
       insert_single_step_breakpoint (get_frame_arch (frame),
 				     get_frame_address_space (frame),
 				     tp->stop_pc ());
