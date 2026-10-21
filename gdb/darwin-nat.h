@@ -129,6 +129,13 @@ private:
   void init_thread_list (inferior *inf);
   void ptrace_him (int pid);
   int cancel_breakpoint (inferior *inf, ptid_t ptid);
+
+#if GDB_SELF_TEST
+public:
+  /* Run check_new_threads from the Darwin thread selftest.  */
+  void selftest_check_new_threads (inferior *inf)
+  { this->check_new_threads (inf); }
+#endif
 };
 
 /* Describe the mach exception handling state for a task.  This state is saved
@@ -211,5 +218,14 @@ extern void mach_check_error (kern_return_t ret, const char *file,
 void darwin_set_sstep (thread_t thread, int enable);
 
 void darwin_check_osabi (darwin_inferior *inf, thread_t thread);
+
+#if GDB_SELF_TEST
+/* When set, check_new_threads uses PORTS instead of task_threads and
+   does not deallocate those port names.  Production behaviour is
+   unchanged while this is clear.  */
+extern void darwin_selftest_set_kernel_threads (const thread_t *ports,
+						unsigned int count);
+extern void darwin_selftest_clear_kernel_threads ();
+#endif
 
 #endif /* GDB_DARWIN_NAT_H */

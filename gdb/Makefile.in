@@ -459,6 +459,7 @@ SELFTESTS_SRCS = \
 	unittests/command-def-selftests.c \
 	unittests/common-utils-selftests.c \
 	unittests/copy_bitwise-selftests.c \
+	unittests/darwin-thread-selftests.c \
 	unittests/enum-flags-selftests.c \
 	unittests/enumerate-selftests.c \
 	unittests/environ-selftests.c \

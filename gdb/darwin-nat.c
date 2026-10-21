@@ -259,25 +259,65 @@ cmp_thread_t (const void *l, const void *r)
   return (int)(tl - tr);
 }
 
+#if GDB_SELF_TEST
+static const thread_t *darwin_selftest_ports;
+static unsigned int darwin_selftest_nports;
+static bool darwin_selftest_override;
+
+void
+darwin_selftest_set_kernel_threads (const thread_t *ports, unsigned int count)
+{
+  darwin_selftest_ports = ports;
+  darwin_selftest_nports = count;
+  darwin_selftest_override = true;
+}
+
+void
+darwin_selftest_clear_kernel_threads ()
+{
+  darwin_selftest_ports = nullptr;
+  darwin_selftest_nports = 0;
+  darwin_selftest_override = false;
+}
+#endif
+
 void
 darwin_nat_target::check_new_threads (inferior *inf)
 {
-  kern_return_t kret;
-  thread_array_t thread_list;
-  unsigned int new_nbr;
+  kern_return_t kret = KERN_SUCCESS;
+  thread_array_t thread_list = nullptr;
+  unsigned int new_nbr = 0;
   unsigned int old_nbr;
   unsigned int new_ix, old_ix;
   darwin_inferior *darwin_inf = get_darwin_inferior (inf);
   std::vector<darwin_thread_t *> new_thread_vec;
+  bool synthetic = false;
+  std::vector<thread_t> synthetic_ports;
 
   if (darwin_inf == nullptr)
     return;
 
-  /* Get list of threads.  */
-  kret = task_threads (darwin_inf->task, &thread_list, &new_nbr);
-  MACH_CHECK_ERROR (kret);
-  if (kret != KERN_SUCCESS)
-    return;
+#if GDB_SELF_TEST
+  if (darwin_selftest_override)
+    {
+      /* The delayed-thread selftest supplies the kernel list.  Those
+	 port names are not real receive rights.  */
+      synthetic = true;
+      if (darwin_selftest_nports > 0)
+	synthetic_ports.assign (darwin_selftest_ports,
+				darwin_selftest_ports + darwin_selftest_nports);
+      thread_list = synthetic_ports.data ();
+      new_nbr = synthetic_ports.size ();
+    }
+  else
+#endif
+    {
+      /* Get list of threads.  */
+      kret = task_threads (darwin_inf->task, &thread_list, &new_nbr);
+      MACH_CHECK_ERROR (kret);
+      if (kret != KERN_SUCCESS)
+	return;
+    }
 
   /* Sort the list.  */
   if (new_nbr > 1)
@@ -295,17 +335,21 @@ darwin_nat_target::check_new_threads (inferior *inf)
 	  break;
       if (i == new_nbr)
 	{
-	  /* Deallocate ports.  */
-	  for (i = 0; i < new_nbr; i++)
+	  if (!synthetic)
 	    {
-	      kret = mach_port_deallocate (mach_task_self (), thread_list[i]);
+	      /* Deallocate ports.  */
+	      for (i = 0; i < new_nbr; i++)
+		{
+		  kret = mach_port_deallocate (mach_task_self (),
+					       thread_list[i]);
+		  MACH_CHECK_ERROR (kret);
+		}
+
+	      /* Deallocate the buffer.  */
+	      kret = vm_deallocate (gdb_task, (vm_address_t) thread_list,
+				    new_nbr * sizeof (int));
 	      MACH_CHECK_ERROR (kret);
 	    }
-
-	  /* Deallocate the buffer.  */
-	  kret = vm_deallocate (gdb_task, (vm_address_t) thread_list,
-				new_nbr * sizeof (int));
-	  MACH_CHECK_ERROR (kret);
 
 	  return;
 	}
@@ -333,9 +377,12 @@ darwin_nat_target::check_new_threads (inferior *inf)
 	  new_ix++;
 	  old_ix++;
 
-	  /* Deallocate the port.  */
-	  kret = mach_port_deallocate (gdb_task, new_id);
-	  MACH_CHECK_ERROR (kret);
+	  if (!synthetic)
+	    {
+	      /* Deallocate the port.  */
+	      kret = mach_port_deallocate (gdb_task, new_id);
+	      MACH_CHECK_ERROR (kret);
+	    }
 
 	  continue;
 	}
@@ -383,8 +430,11 @@ darwin_nat_target::check_new_threads (inferior *inf)
 	    inferior_debug
 	      (4, _("darwin: mach thread 0x%x has no gdb thread\n"),
 	       old_id);
-	  kret = mach_port_deallocate (gdb_task, old_id);
-	  MACH_CHECK_ERROR (kret);
+	  if (!synthetic)
+	    {
+	      kret = mach_port_deallocate (gdb_task, old_id);
+	      MACH_CHECK_ERROR (kret);
+	    }
 	  old_ix++;
 	  continue;
 	}
@@ -393,10 +443,13 @@ darwin_nat_target::check_new_threads (inferior *inf)
 
   darwin_inf->threads = std::move (new_thread_vec);
 
-  /* Deallocate the buffer.  */
-  kret = vm_deallocate (gdb_task, (vm_address_t) thread_list,
-			new_nbr * sizeof (int));
-  MACH_CHECK_ERROR (kret);
+  if (!synthetic)
+    {
+      /* Deallocate the buffer.  */
+      kret = vm_deallocate (gdb_task, (vm_address_t) thread_list,
+			    new_nbr * sizeof (int));
+      MACH_CHECK_ERROR (kret);
+    }
 }
 
 /* Return an inferior by task port.  */
