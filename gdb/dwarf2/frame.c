@@ -1925,7 +1925,15 @@ decode_frame_entry_1 (struct gdbarch *gdbarch,
 	  fde->cie = find_cie (cie_table, cie_pointer);
 	}
 
-      gdb_assert (fde->cie != NULL);
+      /* Some system libraries (macOS Swift images in particular) contain
+	 an FDE whose CIE offset does not resolve.  gdb_assert aborts the
+	 whole session.  error() is caught per objfile in
+	 dwarf2_build_frame_info, which skips this object's .eh_frame and
+	 continues with every other library.  */
+      if (fde->cie == NULL)
+	error (_("no CIE at offset %s for an FDE at offset %s"),
+	       pulongest (cie_pointer),
+	       pulongest ((ULONGEST) (start - unit->dwarf_frame_buffer)));
 
       ULONGEST init_addr
 	= read_encoded_value (unit, fde->cie->encoding, fde->cie->ptr_size,
