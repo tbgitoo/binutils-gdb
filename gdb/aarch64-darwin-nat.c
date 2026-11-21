@@ -125,11 +125,45 @@ aarch64_darwin_nat_target::store_registers (struct regcache *regcache,
     error (_("Writing floating-point or SIMD registers is not "
 	     "supported on AArch64 Darwin."));
 
-  /* thread_set_state of a new PC faults the inferior.  Leave the
-     kernel's program counter alone.  */
+  /* A request for the PC alone.  This translation is arm64 without
+     ptrauth_calls, so arm_thread_state64_set_pc_fptr stores the
+     integer address in __pc and does not sign it.  The full-register
+     store below still leaves the kernel PC untouched.  */
   if (regno == AARCH64_PC_REGNUM)
-    error (_("Changing the program counter is not supported "
-	     "on AArch64 Darwin."));
+    {
+      ULONGEST pc;
+      arm_thread_state64_t wrote;
+      mach_msg_type_number_t wrote_count;
+
+      if (regcache->get_register_status (AARCH64_PC_REGNUM) != REG_VALID)
+	return;
+
+      thread = regcache->ptid ().tid ();
+      kret = thread_get_state (thread, ARM_THREAD_STATE64,
+			       (thread_state_t) &regs, &count);
+      MACH_CHECK_ERROR (kret);
+      if (kret != KERN_SUCCESS)
+	return;
+
+      regcache->raw_collect (AARCH64_PC_REGNUM, &pc);
+      arm_thread_state64_set_pc_fptr (regs,
+				      (void (*) (void)) (uintptr_t) pc);
+      kret = thread_set_state (thread, ARM_THREAD_STATE64,
+			       (thread_state_t) &regs, count);
+      MACH_CHECK_ERROR (kret);
+      if (kret != KERN_SUCCESS)
+	error (_("Failed to store the AArch64 Darwin program counter."));
+
+      wrote_count = ARM_THREAD_STATE64_COUNT;
+      kret = thread_get_state (thread, ARM_THREAD_STATE64,
+			       (thread_state_t) &wrote, &wrote_count);
+      MACH_CHECK_ERROR (kret);
+      if (kret != KERN_SUCCESS
+	  || arm_thread_state64_get_pc (wrote) != pc)
+	error (_("AArch64 Darwin program counter store did not match "
+		 "the value GDB wrote."));
+      return;
+    }
 
   gdb_assert (register_size (regcache->arch (), AARCH64_X0_REGNUM) == 8);
   gdb_assert (register_size (regcache->arch (), AARCH64_CPSR_REGNUM) == 4);

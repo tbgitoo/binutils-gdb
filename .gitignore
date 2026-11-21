@@ -80,3 +80,4 @@ stamp-*
 /build-aarch64-darwin/
 /staging/
 upstream-prep/
+plans/
